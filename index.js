@@ -7,6 +7,7 @@ const morgan = require("morgan");
 const products = require("./routes/productRoutes");
 const categories = require("./routes/categoryRoutes");
 const auth = require("./routes/authRoutes");
+const job = require("./utils/cron");
 
 // const job = require("./lib/cron");
 
@@ -29,12 +30,13 @@ const app = express();
 app.use(cors());
 app.use(helmet());
 app.use(express.json());
+job.start()
 // app.use(express.urlencoded({ limit: "5gb", extended: true }));
 
-if (process.env.NODE_ENV === "development" || !process.env.NODE_ENV) {
+if (process.env.NODE_ENV === "development") {
   app.use(morgan("dev"));
 }
-if (process.env.NODE_ENV === "production") {
+if (process.env.NODE_ENV === "production" || !process.env.NODE_ENV) {
   app.use(morgan("combined"));
 }
 
