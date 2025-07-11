@@ -6,6 +6,7 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const products = require("./routes/productRoutes");
 const categories = require("./routes/categoryRoutes");
+const auth = require("./routes/authRoutes");
 
 // const job = require("./lib/cron");
 
@@ -53,6 +54,7 @@ mongoose
   .catch((err) => console.error("MongoDB connection error:", err));
 
 // Routes
+app.use("/api/auth", auth);
 app.use("/api/products", products);
 app.use("/api/categories", categories);
 
