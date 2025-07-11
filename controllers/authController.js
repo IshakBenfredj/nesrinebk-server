@@ -28,7 +28,7 @@ exports.login = async (req, res) => {
   try {
     const user = await User.findOne({ phone });
     if (!user || !(await user.matchPassword(password)))
-      return res.status(401).json({ message: "بيانات الاعتماد غير صحيحة" });
+      return res.status(500).json({ message: "بيانات الاعتماد غير صحيحة" });
 
     const token = generateToken(user);
     res.json({
