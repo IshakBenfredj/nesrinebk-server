@@ -30,8 +30,9 @@ const ColorVariantSchema = new mongoose.Schema(
       required: true,
       match: [/^#([A-Fa-f0-9]{6})$/, "Hex color code"],
     },
-    image: {
-      type: String,
+    images: {
+      type: [String],
+      default: [],
     },
     sizes: {
       type: [SizeSchema],
@@ -46,10 +47,19 @@ const ProductSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    originalPrice: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
     price: {
       type: Number,
       required: true,
       min: 0,
+    },
+    fabric: {
+      type: String,
+      default: "غير محدد",
     },
     colors: {
       type: [ColorVariantSchema],
@@ -59,6 +69,10 @@ const ProductSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
       required: true,
+    },
+    soldCount: {
+      type: Number,
+      default: 0,
     },
   },
   {
@@ -74,9 +88,8 @@ ProductSchema.index({ category: 1 });
 ProductSchema.index({ price: 1 });
 
 ProductSchema.virtual("totalStock").get(function () {
-  return this.colors.reduce((total, color) => {
-    return total + color.sizes.reduce((sum, size) => sum + size.quantity, 0);
-  }, 0);
+  if (!this.variants || !Array.isArray(this.variants)) return 0;
+  return this.variants.reduce((sum, variant) => sum + variant.stock, 0);
 });
 
 module.exports = mongoose.model("Product", ProductSchema);

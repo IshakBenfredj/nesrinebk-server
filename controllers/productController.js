@@ -1,11 +1,30 @@
 const Product = require("../models/Product");
 const { generateBarcode } = require("../utils/barcodeGenerator");
+const {
+  uploadMultipleImages,
+  deleteImageFromCloudinary,
+} = require("../utils/cloudinary");
 
 exports.createProduct = async (req, res) => {
   try {
-    const { name, description, price, category, colors } = req.body;
+    const {
+      name,
+      fabric,
+      description,
+      price,
+      category,
+      colors,
+      originalPrice,
+    } = req.body;
 
-    if (!name || !price || !category || !colors || colors.length === 0) {
+    if (
+      !name ||
+      !price ||
+      !originalPrice ||
+      !category ||
+      !colors ||
+      colors.length === 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "الحقول المطلوبة مفقودة: الاسم، السعر، التصنيف، الألوان",
@@ -24,24 +43,51 @@ exports.createProduct = async (req, res) => {
       });
     }
 
-    const processedColors = colors.map((color) => ({
-      ...color,
-      sizes: color.sizes.map((size) => ({
-        ...size,
-        barcode: size.barcode || generateBarcode(),
-      })),
-    }));
+    // ✅ تجهيز الألوان ورفع صورها
+    const processedColors = await Promise.all(
+      colors.map(async (color) => {
+        let uploadedImages = [];
+
+        if (Array.isArray(color.images)) {
+          // فقط الصور التي هي base64 سيتم رفعها
+          const imagesToUpload = color.images.filter((img) =>
+            img.startsWith("data:")
+          );
+
+          const alreadyUploaded = color.images.filter(
+            (img) => !img.startsWith("data:")
+          );
+
+          if (imagesToUpload.length > 0) {
+            const result = await uploadMultipleImages(imagesToUpload);
+            uploadedImages = [...alreadyUploaded, ...result];
+          } else {
+            uploadedImages = alreadyUploaded;
+          }
+        }
+
+        return {
+          ...color,
+          images: uploadedImages,
+          sizes: color.sizes.map((size) => ({
+            ...size,
+            barcode: size.barcode || generateBarcode(),
+          })),
+        };
+      })
+    );
 
     const product = new Product({
       name,
       description,
       price,
       category,
+      fabric,
+      originalPrice,
       colors: processedColors,
     });
 
     await product.save();
-
     await product.populate("category");
 
     res.status(201).json({
@@ -122,9 +168,16 @@ exports.getProductById = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, price, category, colors } = req.body;
+    const { name, price, category, colors, fabric, originalPrice } = req.body;
 
-    if (!name || !price || !category || !colors || colors.length === 0) {
+    if (
+      !name ||
+      !price ||
+      !originalPrice ||
+      !category ||
+      !colors ||
+      colors.length === 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "الحقول المطلوبة مفقودة: الاسم، السعر، التصنيف، الألوان",
@@ -139,7 +192,6 @@ exports.updateProduct = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "يجب أن يحتوي كل لون على مقاس واحد على الأقل",
-        data: null,
       });
     }
 
@@ -148,32 +200,65 @@ exports.updateProduct = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "المنتج غير موجود",
-        data: null,
       });
     }
 
-    const processedColors = colors.map((color) => {
-      const existingColor = product.colors.find((c) => c.color === color.color);
+    // تحديث الألوان والصور
+    const processedColors = await Promise.all(
+      colors.map(async (color) => {
+        const existingColor = product.colors.find(
+          (c) => c.color === color.color
+        );
 
-      return {
-        ...color,
-        sizes: color.sizes.map((size) => {
-          const existingSize = existingColor?.sizes?.find(
-            (s) => s.size === size.size
-          );
+        // الصور الجديدة (التي سيتم رفعها)
+        const base64Images = (color.images || []).filter((img) =>
+          img.startsWith("data:")
+        );
+        const retainedImages = (color.images || []).filter(
+          (img) => !img.startsWith("data:")
+        );
 
-          return {
-            ...size,
-            barcode: existingSize?.barcode || generateBarcode(),
-          };
-        }),
-      };
-    });
+        // رفع الصور الجديدة إن وجدت
+        const newUploadedImages =
+          base64Images.length > 0
+            ? await uploadMultipleImages(base64Images)
+            : [];
+
+        // حذف الصور التي كانت موجودة سابقًا وتم حذفها من الواجهة
+        const previousImages = existingColor?.images || [];
+        const removedImages = previousImages.filter(
+          (img) => !retainedImages.includes(img)
+        );
+
+        await Promise.all(
+          removedImages.map((img) => deleteImageFromCloudinary(img))
+        );
+
+        return {
+          ...color,
+          images: [...retainedImages, ...newUploadedImages],
+          sizes: color.sizes.map((size) => {
+            const existingSize = existingColor?.sizes?.find(
+              (s) => s.size === size.size
+            );
+
+            return {
+              ...size,
+              barcode: existingSize?.barcode || generateBarcode(),
+            };
+          }),
+        };
+      })
+    );
 
     product.name = name;
     product.price = price;
     product.category = category;
+    product.originalPrice = originalPrice;
     product.colors = processedColors;
+    if (fabric) {
+      product.fabric = fabric;
+    }
 
     await product.save();
     await product.populate("category");
