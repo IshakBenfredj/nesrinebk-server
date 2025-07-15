@@ -9,28 +9,27 @@ exports.createSale = async (req, res) => {
   try {
     const { items, cashier } = req.body;
 
-    // Validate items
     if (!items || items.length === 0) {
       return res.status(400).json({
         success: false,
-        error: "No items in the sale",
+        error: "لا توجد منتجات في الطلب",
       });
     }
 
-    // Calculate totals
     let total = 0;
     let originalTotal = 0;
     let profit = 0;
 
-    // Prepare items with original price
     const saleItems = await Promise.all(
       items.map(async (item) => {
         const product = await Product.findById(item.product);
         if (!product) {
-          throw new Error(`Product not found: ${item.product}`);
+          res.status(500).json({
+            status: 400,
+            message: `المنتج غير موجود: ${item.product}`,
+          });
         }
 
-        // Find the specific size and color
         let foundSize = null;
         let foundColor = null;
 
@@ -44,17 +43,19 @@ exports.createSale = async (req, res) => {
         });
 
         if (!foundSize || !foundColor) {
-          throw new Error(
-            `Product variant not found for barcode: ${item.barcode}`
-          );
+          res.status(500).json({
+            status: 400,
+            message: `لم يتم العثور على المقاس أو اللون للباركود: ${item.barcode}`,
+          });
         }
 
-        // Check stock
         if (foundSize.quantity < item.quantity) {
-          throw new Error(`Insufficient stock for product: ${product.name}`);
+          res.status(500).json({
+            status: 400,
+            message: `الكمية غير متوفرة للمنتج: ${product.name} (${foundSize.size}) - يتوفر ${foundSize.quantity}`,
+          });
         }
 
-        // Calculate prices
         const itemTotal = item.quantity * product.price;
         const itemOriginalTotal = item.quantity * product.originalPrice;
         const itemProfit = itemTotal - itemOriginalTotal;
@@ -75,9 +76,8 @@ exports.createSale = async (req, res) => {
       })
     );
 
-    // Create the sale with a unique barcode
     const sale = new Sale({
-      barcode: uuidv4().substring(0, 8).toUpperCase(), // Generate 8-char unique barcode
+      barcode: uuidv4().substring(0, 8).toUpperCase(),
       items: saleItems,
       total,
       originalTotal,
@@ -85,7 +85,6 @@ exports.createSale = async (req, res) => {
       cashier,
     });
 
-    // Update product stocks and sold counts
     await Promise.all(
       saleItems.map(async (item) => {
         await updateProductStock(
@@ -97,10 +96,7 @@ exports.createSale = async (req, res) => {
       })
     );
 
-    // Save the sale
     await sale.save();
-
-    // Update daily profit
     await updateDailyProfit(sale.createdAt, total, originalTotal, profit);
 
     res.status(201).json({
@@ -108,10 +104,10 @@ exports.createSale = async (req, res) => {
       data: sale,
     });
   } catch (error) {
-    console.error("Error creating sale:", error);
-    res.status(500).json({
+    const status = error.status || 500;
+    res.status(status).json({
       success: false,
-      error: error.message,
+      error: error.message || "حدث خطأ أثناء إنشاء الفاتورة",
     });
   }
 };
@@ -214,13 +210,13 @@ exports.getSaleByBarcode = async (req, res) => {
 exports.exchangeProducts = async (req, res) => {
   try {
     const { saleId } = req.params;
-    const { exchanges, cashier } = req.body; // Now expects array of exchanges
+    const { exchanges, cashier } = req.body;
 
     // Validate input
     if (!exchanges || !Array.isArray(exchanges) || exchanges.length === 0) {
       return res.status(400).json({
         success: false,
-        error: "No exchange items provided",
+        message: "لا توجد عناصر للاستبدال",
       });
     }
 
@@ -229,7 +225,7 @@ exports.exchangeProducts = async (req, res) => {
     if (!sale) {
       return res.status(404).json({
         success: false,
-        error: "Sale not found",
+        message: "الفاتورة غير موجودة",
       });
     }
 
@@ -239,13 +235,14 @@ exports.exchangeProducts = async (req, res) => {
     const hoursDiff = (now - saleTime) / (1000 * 60 * 60);
 
     if (hoursDiff > 24) {
-      return res.status(400).json({
+      return res.json({
         success: false,
-        error: "Exchange period has expired (24 hours)",
+        expired: true,
+        message: "انتهت فترة الـ 24 ساعة المسموح بها للاستبدال",
       });
     }
 
-    // Prepare for batch processing
+    // Prepare for processing
     const stockUpdates = [];
     const exchangeRecords = [];
     let totalOriginalAmount = 0;
@@ -257,14 +254,20 @@ exports.exchangeProducts = async (req, res) => {
     for (const exchange of exchanges) {
       const { originalBarcode, newBarcode, newQuantity } = exchange;
 
+      // Validate quantity
+      if (newQuantity < 1) {
+        return res.status(400).json({
+          success: false,
+          message: `الكمية يجب أن تكون أكبر من الصفر للباركود: ${newBarcode}`,
+        });
+      }
+
       // Find the original item in the sale
-      const originalItem = sale.items.find(
-        (item) => item.barcode === originalBarcode
-      );
+      const originalItem = sale.items.find(item => item.barcode === originalBarcode);
       if (!originalItem) {
         return res.status(404).json({
           success: false,
-          error: `Original item with barcode ${originalBarcode} not found in sale`,
+          message: `المنتج الأصلي غير موجود في الفاتورة: ${originalBarcode}`,
         });
       }
 
@@ -275,7 +278,7 @@ exports.exchangeProducts = async (req, res) => {
       if (!newProduct) {
         return res.status(404).json({
           success: false,
-          error: `New product with barcode ${newBarcode} not found`,
+          message: `المنتج الجديد غير موجود: ${newBarcode}`,
         });
       }
 
@@ -297,22 +300,15 @@ exports.exchangeProducts = async (req, res) => {
       if (!newSize || !newColor) {
         return res.status(404).json({
           success: false,
-          error: `New product variant with barcode ${newBarcode} not found`,
+          message: `لم يتم العثور على المقاس أو اللون للباركود: ${newBarcode}`,
         });
       }
 
-      // Validate new quantity
-      if (newQuantity < 1) {
+      // Check stock availability
+      if (newSize.quantity < newQuantity) {
         return res.status(400).json({
           success: false,
-          error: `Invalid quantity for product ${newBarcode}`,
-        });
-      }
-
-      if (newQuantity > newSize.quantity) {
-        return res.status(400).json({
-          success: false,
-          error: `Insufficient stock for product ${newBarcode} (Available: ${newSize.quantity})`,
+          message: `الكمية غير متوفرة للمنتج: ${newProduct.name} (${newSize.size}) - يتوفر ${newSize.quantity}`,
         });
       }
 
@@ -327,7 +323,7 @@ exports.exchangeProducts = async (req, res) => {
         color: newColor.color,
       };
 
-      // Calculate amounts
+      // Calculate financials
       const originalAmount = originalItem.quantity * originalItem.price;
       const newAmount = newQuantity * newProduct.price;
       const priceDifference = newAmount - originalAmount;
@@ -335,7 +331,7 @@ exports.exchangeProducts = async (req, res) => {
       const originalCost = originalItem.quantity * originalItem.originalPrice;
       const newCost = newQuantity * newProduct.originalPrice;
 
-      // Add to stock updates
+      // Prepare stock updates
       stockUpdates.push(
         // Return original item to stock
         updateProductStock(
@@ -349,14 +345,15 @@ exports.exchangeProducts = async (req, res) => {
       );
 
       // Update sale items
-      sale.items = sale.items.map((item) =>
+      sale.items = sale.items.map(item => 
         item.barcode === originalBarcode ? exchangedItem : item
       );
 
-      // Add to exchange records
+      // Record exchange
       exchangeRecords.push({
         originalItem,
         exchangedWith: exchangedItem,
+        exchangedAt: now,
         priceDifference,
       });
 
@@ -381,14 +378,12 @@ exports.exchangeProducts = async (req, res) => {
     );
     sale.profit = sale.total - sale.originalTotal;
     sale.isExchanged = true;
-
-    // Add all exchanges to history
     sale.exchanges.push(...exchangeRecords);
 
     // Save the updated sale
     await sale.save();
 
-    // Update daily profit for both days
+    // Update daily profits for both days
     await Promise.all([
       updateDailyProfit(
         saleTime,
@@ -412,7 +407,7 @@ exports.exchangeProducts = async (req, res) => {
     console.error("Error exchanging products:", error);
     res.status(500).json({
       success: false,
-      error: error.message,
+      message:  "حدث خطأ أثناء عملية الاستبدال",
     });
   }
 };
