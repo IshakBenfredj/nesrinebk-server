@@ -87,6 +87,10 @@ const SaleSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    exchangeCashier: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
     exchanges: {
       type: [ExchangeItemSchema],
       default: [],

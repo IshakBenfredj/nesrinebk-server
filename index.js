@@ -8,7 +8,9 @@ const products = require("./routes/productRoutes");
 const categories = require("./routes/categoryRoutes");
 const auth = require("./routes/authRoutes");
 const sales = require("./routes/saleRoutes");
+const expenses = require("./routes/expenseRoutes");
 const dailyProfit = require("./routes/dailyProfitRoutes");
+const orders = require("./routes/orderRoutes");
 const job = require("./utils/cron");
 
 // const job = require("./lib/cron");
@@ -63,6 +65,8 @@ app.use("/api/auth", auth);
 app.use("/api/products", products);
 app.use("/api/categories", categories);
 app.use("/api/sales", sales);
+app.use("/api/expenses", expenses);
+app.use("/api/orders", orders);
 app.use("/api/daily-profit", dailyProfit);
 
 const PORT = process.env.PORT || 5000;
