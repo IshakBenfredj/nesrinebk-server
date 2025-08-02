@@ -11,6 +11,7 @@ const sales = require("./routes/saleRoutes");
 const expenses = require("./routes/expenseRoutes");
 const dailyProfit = require("./routes/dailyProfitRoutes");
 const orders = require("./routes/orderRoutes");
+const profits = require("./routes/profitsRoutes");
 const job = require("./utils/cron");
 
 // const job = require("./lib/cron");
@@ -67,7 +68,7 @@ app.use("/api/categories", categories);
 app.use("/api/sales", sales);
 app.use("/api/expenses", expenses);
 app.use("/api/orders", orders);
-app.use("/api/daily-profit", dailyProfit);
+app.use("/api/profits", profits);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
