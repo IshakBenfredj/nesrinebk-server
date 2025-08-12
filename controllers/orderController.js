@@ -134,7 +134,7 @@ exports.createOrder = async (req, res) => {
       }
     }
 
-    res.status(201).json({ success: true, data: newOrder });
+    res.status(201).json({ success: true, data: newOrder, message : "تم إنشاء طلبية بنجاح" });
   } catch (err) {
     console.error("Error creating order:", err);
     res
