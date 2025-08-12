@@ -10,7 +10,7 @@ const auth = require("./routes/authRoutes");
 const sales = require("./routes/saleRoutes");
 const expenses = require("./routes/expenseRoutes");
 const orders = require("./routes/orderRoutes");
-const profits = require("./routes/profitsRoutes");
+const analytics = require("./routes/analyticsRoutes");
 const revenuesChanges = require("./routes/revenuesChangesRoutes");
 const stockHistory = require("./routes/stockHistoryRoutes");
 const todo = require("./routes/todoRoutes");
@@ -38,15 +38,16 @@ app.use(cors());
 app.use(helmet());
 app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ limit: "100mb", extended: true }));
+app.use(morgan("dev"));
 // job.start()
 // app.use(express.urlencoded({ limit: "5gb", extended: true }));
 
-if (process.env.NODE_ENV === "development") {
-  app.use(morgan("dev"));
-}
-if (process.env.NODE_ENV === "production" || !process.env.NODE_ENV) {
-  app.use(morgan("combined"));
-}
+// if (process.env.NODE_ENV === "development") {
+//   app.use(morgan("dev"));
+// }
+// if (process.env.NODE_ENV === "production" || !process.env.NODE_ENV) {
+//   app.use(morgan("combined"));
+// }
 
 app.use((req, res, next) => {
   const customerHeader = req.headers["x-custom-header"];
@@ -70,7 +71,7 @@ app.use("/api/categories", categories);
 app.use("/api/sales", sales);
 app.use("/api/expenses", expenses);
 app.use("/api/orders", orders);
-app.use("/api/profits", profits);
+app.use("/api/analytics", analytics);
 app.use("/api/revenues-changes", revenuesChanges);
 app.use("/api/stock-history", stockHistory);
 app.use("/api/todos", todo);
