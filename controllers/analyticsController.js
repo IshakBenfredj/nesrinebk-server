@@ -33,8 +33,8 @@ exports.getFullSummary = async (req, res) => {
       type === "day"
         ? date
         : type === "month"
-        ? date.slice(0, 7)
-        : date.slice(0, 4);
+          ? date.slice(0, 7)
+          : date.slice(0, 4);
 
     // ================================================
     // 1. DATE-FILTERED SALES CALCULATION
@@ -140,7 +140,7 @@ exports.getFullSummary = async (req, res) => {
       const createdAt = exp.createdAt.toISOString();
       const expDate = createdAt.slice(
         0,
-        type === "day" ? 10 : type === "month" ? 7 : 4
+        type === "day" ? 10 : type === "month" ? 7 : 4,
       );
 
       // Check if expense matches the date filter
@@ -239,14 +239,14 @@ exports.getFullSummary = async (req, res) => {
     });
     const allTimeNonFixedExpenses = nonFixedExpenses.reduce(
       (sum, exp) => sum + exp.amount,
-      0
+      0,
     );
 
     // ALL-TIME REVENUE CHANGES
     const allRevenueChanges = await RevenueChanges.find({});
     const allTimeRevenueChanges = allRevenueChanges.reduce(
       (sum, r) => sum + r.amount,
-      0
+      0,
     );
 
     // ================================================
@@ -258,15 +258,23 @@ exports.getFullSummary = async (req, res) => {
       allTimeOrders -
       allTimeNonFixedExpenses +
       allTimeRevenueChanges;
-    const netProfit = profitSales + profitOrders - totalExpenses; // Includes admin expenses
+    const netProfit = profitSales + profitOrders - totalExpenses; 
 
     // CAPITAL CALCULATION
     const products = await Product.find({});
+    let totalOCapital = 0;
     let totalCapital = 0;
     products.forEach((product) => {
       product.colors.forEach((colorVariant) => {
         colorVariant.sizes.forEach((size) => {
-          totalCapital += size.quantity * product.originalPrice;
+          totalOCapital += size.quantity * product.originalPrice;
+        });
+      });
+    });
+    products.forEach((product) => {
+      product.colors.forEach((colorVariant) => {
+        colorVariant.sizes.forEach((size) => {
+          totalCapital += size.quantity * product.price;
         });
       });
     });
@@ -293,7 +301,10 @@ exports.getFullSummary = async (req, res) => {
         allTimeNonFixed: allTimeNonFixedExpenses,
       },
       revenueChanges: allTimeRevenueChanges,
-      capital: totalCapital,
+      capital: {
+        totalCapital,
+        totalOCapital
+      },
       totals: {
         turnover,
         totalRevenue,
@@ -332,8 +343,7 @@ exports.getTopProducts = async (req, res) => {
       }
 
       if (period === "day") {
-        if (!dayNum)
-          throw new Error("يجب تحديد اليوم عند اختيار الفترة day");
+        if (!dayNum) throw new Error("يجب تحديد اليوم عند اختيار الفترة day");
         expr.push({ $eq: [{ $dayOfMonth: `$${dateField}` }, dayNum] });
       }
 
@@ -386,7 +396,10 @@ exports.getTopProducts = async (req, res) => {
     console.error("❌ Error in getTopProducts:", err);
     res
       .status(500)
-      .json({ success: false, message: err.message || "خطأ في جلب أفضل المنتجات" });
+      .json({
+        success: false,
+        message: err.message || "خطأ في جلب أفضل المنتجات",
+      });
   }
 };
 
@@ -394,10 +407,10 @@ exports.getTopProducts = async (req, res) => {
 exports.getRevenueTrend = async (req, res) => {
   try {
     const { range = "6months" } = req.query;
-    
+
     let startDate = new Date();
     let groupBy = { $dateToString: { format: "%Y-%m", date: "$createdAt" } };
-    
+
     switch (range) {
       case "7days":
         startDate.setDate(startDate.getDate() - 7);
@@ -425,47 +438,47 @@ exports.getRevenueTrend = async (req, res) => {
           _id: groupBy,
           totalSales: { $sum: "$total" },
           totalProfit: { $sum: "$profit" },
-          count: { $sum: 1 }
-        }
+          count: { $sum: 1 },
+        },
       },
-      { $sort: { "_id": 1 } }
+      { $sort: { _id: 1 } },
     ]);
 
     // Orders trend
     const ordersTrend = await Order.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           createdAt: { $gte: startDate },
           $or: [{ status: "تم الاستلام" }, { isPaid: true }],
-          status: { $ne: "ارجاع" }
-        }
+          status: { $ne: "ارجاع" },
+        },
       },
       {
         $group: {
           _id: groupBy,
           totalOrders: { $sum: "$totalPrice" },
-          count: { $sum: 1 }
-        }
+          count: { $sum: 1 },
+        },
       },
-      { $sort: { "_id": 1 } }
+      { $sort: { _id: 1 } },
     ]);
 
     // Combine data
     const combinedData = [];
     const dateMap = new Map();
 
-    salesTrend.forEach(item => {
+    salesTrend.forEach((item) => {
       dateMap.set(item._id, {
         date: item._id,
         sales: item.totalSales,
         salesProfit: item.totalProfit,
         salesCount: item.count,
         orders: 0,
-        ordersCount: 0
+        ordersCount: 0,
       });
     });
 
-    ordersTrend.forEach(item => {
+    ordersTrend.forEach((item) => {
       if (dateMap.has(item._id)) {
         dateMap.get(item._id).orders = item.totalOrders;
         dateMap.get(item._id).ordersCount = item.count;
@@ -476,17 +489,21 @@ exports.getRevenueTrend = async (req, res) => {
           salesProfit: 0,
           salesCount: 0,
           orders: item.totalOrders,
-          ordersCount: item.count
+          ordersCount: item.count,
         });
       }
     });
 
-    const data = Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    const data = Array.from(dateMap.values()).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
 
     res.json({ success: true, data });
   } catch (error) {
     console.error("Error in getRevenueTrend:", error);
-    res.status(500).json({ success: false, message: "خطأ في جلب اتجاه الإيرادات" });
+    res
+      .status(500)
+      .json({ success: false, message: "خطأ في جلب اتجاه الإيرادات" });
   }
 };
 
@@ -494,7 +511,7 @@ exports.getRevenueTrend = async (req, res) => {
 exports.getProductPerformance = async (req, res) => {
   try {
     const { range = "6months", limit = 10 } = req.query;
-    
+
     let startDate = new Date();
     switch (range) {
       case "7days":
@@ -521,24 +538,26 @@ exports.getProductPerformance = async (req, res) => {
         $group: {
           _id: "$items.product",
           totalSold: { $sum: "$items.quantity" },
-          totalRevenue: { $sum: { $multiply: ["$items.price", "$items.quantity"] } },
-          totalProfit: { 
-            $sum: { 
+          totalRevenue: {
+            $sum: { $multiply: ["$items.price", "$items.quantity"] },
+          },
+          totalProfit: {
+            $sum: {
               $multiply: [
                 { $subtract: ["$items.price", "$items.originalPrice"] },
-                "$items.quantity"
-              ]
-            }
-          }
-        }
+                "$items.quantity",
+              ],
+            },
+          },
+        },
       },
       {
         $lookup: {
           from: "products",
           localField: "_id",
           foreignField: "_id",
-          as: "product"
-        }
+          as: "product",
+        },
       },
       { $unwind: "$product" },
       {
@@ -553,62 +572,66 @@ exports.getProductPerformance = async (req, res) => {
                 input: "$product.colors",
                 as: "color",
                 in: {
-                  $sum: "$$color.sizes.quantity"
-                }
-              }
-            }
-          }
-        }
+                  $sum: "$$color.sizes.quantity",
+                },
+              },
+            },
+          },
+        },
       },
       { $sort: { totalSold: -1 } },
-      { $limit: parseInt(limit) }
+      { $limit: parseInt(limit) },
     ]);
 
     // Orders performance
     const ordersPerformance = await Order.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           createdAt: { $gte: startDate },
           $or: [{ status: "تم الاستلام" }, { isPaid: true }],
-          status: { $ne: "ارجاع" }
-        }
+          status: { $ne: "ارجاع" },
+        },
       },
       { $unwind: "$items" },
       {
         $group: {
           _id: "$items.product",
           totalOrdered: { $sum: "$items.quantity" },
-          orderRevenue: { $sum: { $multiply: ["$items.price", "$items.quantity"] } }
-        }
+          orderRevenue: {
+            $sum: { $multiply: ["$items.price", "$items.quantity"] },
+          },
+        },
       },
       {
         $lookup: {
           from: "products",
           localField: "_id",
           foreignField: "_id",
-          as: "product"
-        }
+          as: "product",
+        },
       },
       { $unwind: "$product" },
       {
         $project: {
           name: "$product.name",
           totalOrdered: 1,
-          orderRevenue: 1
-        }
+          orderRevenue: 1,
+        },
       },
       { $sort: { totalOrdered: -1 } },
-      { $limit: parseInt(limit) }
+      { $limit: parseInt(limit) },
     ]);
 
-    res.json({ 
-      success: true, 
-      salesPerformance, 
-      ordersPerformance 
+    res.json({
+      success: true,
+      salesPerformance,
+      ordersPerformance,
     });
   } catch (error) {
     console.error("Error in getProductPerformance:", error);
-    res.status(500).json({ success: false, message: "خطأ في جلب أداء المنتجات" });
+    res
+      .status(500)
+      .json({ success: false, message: "خطأ في جلب أداء المنتجات" });
   }
 };
 
@@ -616,7 +639,7 @@ exports.getProductPerformance = async (req, res) => {
 exports.getCustomerAnalysis = async (req, res) => {
   try {
     const { range = "6months" } = req.query;
-    
+
     let startDate = new Date();
     switch (range) {
       case "7days":
@@ -637,12 +660,12 @@ exports.getCustomerAnalysis = async (req, res) => {
 
     // Order customer analysis
     const customerData = await Order.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           createdAt: { $gte: startDate },
           $or: [{ status: "تم الاستلام" }, { isPaid: true }],
-          status: { $ne: "ارجاع" }
-        }
+          status: { $ne: "ارجاع" },
+        },
       },
       {
         $group: {
@@ -650,8 +673,8 @@ exports.getCustomerAnalysis = async (req, res) => {
           orderCount: { $sum: 1 },
           totalSpent: { $sum: "$totalPrice" },
           avgOrderValue: { $avg: "$totalPrice" },
-          lastOrderDate: { $max: "$createdAt" }
-        }
+          lastOrderDate: { $max: "$createdAt" },
+        },
       },
       {
         $addFields: {
@@ -660,40 +683,40 @@ exports.getCustomerAnalysis = async (req, res) => {
               branches: [
                 { case: { $gte: ["$orderCount", 10] }, then: "عملاء مميزون" },
                 { case: { $gte: ["$orderCount", 5] }, then: "عملاء منتظمون" },
-                { case: { $gte: ["$orderCount", 2] }, then: "عملاء متكررون" }
+                { case: { $gte: ["$orderCount", 2] }, then: "عملاء متكررون" },
               ],
-              default: "عملاء جدد"
-            }
-          }
-        }
+              default: "عملاء جدد",
+            },
+          },
+        },
       },
       {
         $group: {
           _id: "$customerSegment",
           count: { $sum: 1 },
           totalRevenue: { $sum: "$totalSpent" },
-          avgOrderValue: { $avg: "$avgOrderValue" }
-        }
+          avgOrderValue: { $avg: "$avgOrderValue" },
+        },
       },
-      { $sort: { totalRevenue: -1 } }
+      { $sort: { totalRevenue: -1 } },
     ]);
 
     // Top customers
     const topCustomers = await Order.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           createdAt: { $gte: startDate },
           $or: [{ status: "تم الاستلام" }, { isPaid: true }],
-          status: { $ne: "ارجاع" }
-        }
+          status: { $ne: "ارجاع" },
+        },
       },
       {
         $group: {
           _id: { phone: "$phone", name: "$fullName" },
           orderCount: { $sum: 1 },
           totalSpent: { $sum: "$totalPrice" },
-          lastOrder: { $max: "$createdAt" }
-        }
+          lastOrder: { $max: "$createdAt" },
+        },
       },
       { $sort: { totalSpent: -1 } },
       { $limit: 10 },
@@ -703,19 +726,21 @@ exports.getCustomerAnalysis = async (req, res) => {
           phone: "$_id.phone",
           orderCount: 1,
           totalSpent: 1,
-          lastOrder: 1
-        }
-      }
+          lastOrder: 1,
+        },
+      },
     ]);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       customerSegments: customerData,
-      topCustomers
+      topCustomers,
     });
   } catch (error) {
     console.error("Error in getCustomerAnalysis:", error);
-    res.status(500).json({ success: false, message: "خطأ في جلب تحليل العملاء" });
+    res
+      .status(500)
+      .json({ success: false, message: "خطأ في جلب تحليل العملاء" });
   }
 };
 
@@ -723,7 +748,7 @@ exports.getCustomerAnalysis = async (req, res) => {
 exports.getSalesChannels = async (req, res) => {
   try {
     const { range = "6months" } = req.query;
-    
+
     let startDate = new Date();
     switch (range) {
       case "7days":
@@ -750,27 +775,27 @@ exports.getSalesChannels = async (req, res) => {
           _id: null,
           count: { $sum: 1 },
           revenue: { $sum: "$total" },
-          profit: { $sum: "$profit" }
-        }
-      }
+          profit: { $sum: "$profit" },
+        },
+      },
     ]);
 
     // Orders (online)
     const ordersData = await Order.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           createdAt: { $gte: startDate },
           $or: [{ status: "تم الاستلام" }, { isPaid: true }],
-          status: { $ne: "ارجاع" }
-        }
+          status: { $ne: "ارجاع" },
+        },
       },
       {
         $group: {
           _id: null,
           count: { $sum: 1 },
-          revenue: { $sum: "$totalPrice" }
-        }
-      }
+          revenue: { $sum: "$totalPrice" },
+        },
+      },
     ]);
 
     const sales = salesData[0] || { count: 0, revenue: 0, profit: 0 };
@@ -783,15 +808,21 @@ exports.getSalesChannels = async (req, res) => {
         channel: "المتجر الفعلي",
         count: sales.count,
         revenue: sales.revenue,
-        percentage: totalRevenue > 0 ? ((sales.revenue / totalRevenue) * 100).toFixed(1) : 0,
-        profit: sales.profit
+        percentage:
+          totalRevenue > 0
+            ? ((sales.revenue / totalRevenue) * 100).toFixed(1)
+            : 0,
+        profit: sales.profit,
       },
       {
         channel: "الطلبات أونلاين",
         count: orders.count,
         revenue: orders.revenue,
-        percentage: totalRevenue > 0 ? ((orders.revenue / totalRevenue) * 100).toFixed(1) : 0
-      }
+        percentage:
+          totalRevenue > 0
+            ? ((orders.revenue / totalRevenue) * 100).toFixed(1)
+            : 0,
+      },
     ];
 
     res.json({ success: true, data: channelsData, totalRevenue });
@@ -811,8 +842,8 @@ exports.getInventoryAlerts = async (req, res) => {
       { $unwind: "$colors.sizes" },
       {
         $match: {
-          "colors.sizes.quantity": { $lte: parseInt(minStockThreshold) }
-        }
+          "colors.sizes.quantity": { $lte: parseInt(minStockThreshold) },
+        },
       },
       {
         $project: {
@@ -825,14 +856,16 @@ exports.getInventoryAlerts = async (req, res) => {
           originalPrice: 1,
           status: {
             $cond: {
-              if: { $lte: ["$colors.sizes.quantity", parseInt(criticalThreshold)] },
+              if: {
+                $lte: ["$colors.sizes.quantity", parseInt(criticalThreshold)],
+              },
               then: "critical",
-              else: "warning"
-            }
-          }
-        }
+              else: "warning",
+            },
+          },
+        },
       },
-      { $sort: { quantity: 1 } }
+      { $sort: { quantity: 1 } },
     ]);
 
     // Out of stock products
@@ -841,8 +874,8 @@ exports.getInventoryAlerts = async (req, res) => {
       { $unwind: "$colors.sizes" },
       {
         $match: {
-          "colors.sizes.quantity": { $eq: 0 }
-        }
+          "colors.sizes.quantity": { $eq: 0 },
+        },
       },
       {
         $project: {
@@ -853,24 +886,27 @@ exports.getInventoryAlerts = async (req, res) => {
           quantity: "$colors.sizes.quantity",
           price: 1,
           originalPrice: 1,
-          status: "out_of_stock"
-        }
-      }
+          status: "out_of_stock",
+        },
+      },
     ]);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       lowStock: lowStockProducts,
       outOfStock: outOfStockProducts,
       summary: {
         lowStockCount: lowStockProducts.length,
         outOfStockCount: outOfStockProducts.length,
-        criticalCount: lowStockProducts.filter(p => p.status === 'critical').length
-      }
+        criticalCount: lowStockProducts.filter((p) => p.status === "critical")
+          .length,
+      },
     });
   } catch (error) {
     console.error("Error in getInventoryAlerts:", error);
-    res.status(500).json({ success: false, message: "خطأ في جلب تنبيهات المخزون" });
+    res
+      .status(500)
+      .json({ success: false, message: "خطأ في جلب تنبيهات المخزون" });
   }
 };
 
@@ -888,66 +924,79 @@ exports.getHourlySalesPattern = async (req, res) => {
 
     const startOfDay = new Date(targetDate);
     startOfDay.setHours(0, 0, 0, 0);
-    
+
     const endOfDay = new Date(targetDate);
     endOfDay.setHours(23, 59, 59, 999);
 
     // Sales pattern
     const salesPattern = await Sale.aggregate([
-      { 
-        $match: { 
-          createdAt: { $gte: startOfDay, $lte: endOfDay }
-        }
+      {
+        $match: {
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+        },
       },
       {
         $group: {
           _id: { $hour: "$createdAt" },
           count: { $sum: 1 },
           revenue: { $sum: "$total" },
-          profit: { $sum: "$profit" }
-        }
+          profit: { $sum: "$profit" },
+        },
       },
-      { $sort: { "_id": 1 } }
+      { $sort: { _id: 1 } },
     ]);
 
     // Orders pattern
     const ordersPattern = await Order.aggregate([
-      { 
-        $match: { 
-          createdAt: { $gte: startOfDay, $lte: endOfDay }
-        }
+      {
+        $match: {
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+        },
       },
       {
         $group: {
           _id: { $hour: "$createdAt" },
           count: { $sum: 1 },
-          revenue: { $sum: "$totalPrice" }
-        }
+          revenue: { $sum: "$totalPrice" },
+        },
       },
-      { $sort: { "_id": 1 } }
+      { $sort: { _id: 1 } },
     ]);
 
     // Create hourly data (0-23)
     const hourlyData = [];
     for (let hour = 0; hour < 24; hour++) {
-      const salesData = salesPattern.find(s => s._id === hour) || { count: 0, revenue: 0, profit: 0 };
-      const ordersData = ordersPattern.find(o => o._id === hour) || { count: 0, revenue: 0 };
+      const salesData = salesPattern.find((s) => s._id === hour) || {
+        count: 0,
+        revenue: 0,
+        profit: 0,
+      };
+      const ordersData = ordersPattern.find((o) => o._id === hour) || {
+        count: 0,
+        revenue: 0,
+      };
 
       hourlyData.push({
-        hour: `${hour.toString().padStart(2, '0')}:00`,
+        hour: `${hour.toString().padStart(2, "0")}:00`,
         salesCount: salesData.count,
         salesRevenue: salesData.revenue,
         salesProfit: salesData.profit,
         ordersCount: ordersData.count,
         ordersRevenue: ordersData.revenue,
-        totalRevenue: salesData.revenue + ordersData.revenue
+        totalRevenue: salesData.revenue + ordersData.revenue,
       });
     }
 
-    res.json({ success: true, data: hourlyData, date: targetDate.toISOString().split('T')[0] });
+    res.json({
+      success: true,
+      data: hourlyData,
+      date: targetDate.toISOString().split("T")[0],
+    });
   } catch (error) {
     console.error("Error in getHourlySalesPattern:", error);
-    res.status(500).json({ success: false, message: "خطأ في جلب نمط المبيعات اليومي" });
+    res
+      .status(500)
+      .json({ success: false, message: "خطأ في جلب نمط المبيعات اليومي" });
   }
 };
 
@@ -955,7 +1004,7 @@ exports.getHourlySalesPattern = async (req, res) => {
 exports.getExpenseAnalysis = async (req, res) => {
   try {
     const { range = "6months" } = req.query;
-    
+
     let startDate = new Date();
     switch (range) {
       case "7days":
@@ -987,18 +1036,18 @@ exports.getExpenseAnalysis = async (req, res) => {
                   $cond: {
                     if: "$isFixed",
                     then: "مصاريف ثابتة",
-                    else: "مصاريف متغيرة"
-                  }
-                }
-              }
+                    else: "مصاريف متغيرة",
+                  },
+                },
+              },
             },
-            month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } }
+            month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
           },
           totalAmount: { $sum: "$amount" },
-          count: { $sum: 1 }
-        }
+          count: { $sum: 1 },
+        },
       },
-      { $sort: { "_id.month": 1 } }
+      { $sort: { "_id.month": 1 } },
     ]);
 
     // Category totals
@@ -1014,25 +1063,27 @@ exports.getExpenseAnalysis = async (req, res) => {
                 $cond: {
                   if: "$isFixed",
                   then: "مصاريف ثابتة",
-                  else: "مصاريف متغيرة"
-                }
-              }
-            }
+                  else: "مصاريف متغيرة",
+                },
+              },
+            },
           },
           total: { $sum: "$amount" },
-          count: { $sum: 1 }
-        }
+          count: { $sum: 1 },
+        },
       },
-      { $sort: { total: -1 } }
+      { $sort: { total: -1 } },
     ]);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       monthlyExpenses: expenseAnalysis,
-      categoryTotals
+      categoryTotals,
     });
   } catch (error) {
     console.error("Error in getExpenseAnalysis:", error);
-    res.status(500).json({ success: false, message: "خطأ في جلب تحليل المصروفات" });
+    res
+      .status(500)
+      .json({ success: false, message: "خطأ في جلب تحليل المصروفات" });
   }
 };

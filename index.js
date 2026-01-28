@@ -16,8 +16,6 @@ const stockHistory = require("./routes/stockHistoryRoutes");
 const todo = require("./routes/todoRoutes");
 const job = require("./utils/cron");
 
-// const job = require("./lib/cron");
-
 dotenv.config();
 
 const app = express();
@@ -39,7 +37,6 @@ app.use(helmet());
 app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ limit: "100mb", extended: true }));
 app.use(morgan("dev"));
-// job.start()
 // app.use(express.urlencoded({ limit: "5gb", extended: true }));
 
 // if (process.env.NODE_ENV === "development") {

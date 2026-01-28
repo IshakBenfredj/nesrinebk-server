@@ -41,8 +41,7 @@ exports.createOrder = async (req, res) => {
     }
 
     let totalPrice = 0;
-    const shouldDecreaseStock =
-      status !== "غير مؤكدة" && status !== "مؤكدة" && status !== "ارجاع";
+    const shouldDecreaseStock = status !== "غير مؤكدة" && status !== "ارجاع";
 
     for (const item of items) {
       const product = await Product.findById(item.product);
@@ -100,7 +99,7 @@ exports.createOrder = async (req, res) => {
 
       totalPrice += item.quantity * item.price;
 
-      // ✅ إنقاص الكمية فقط إذا كانت الحالة ليست (غير مؤكدة / مؤكدة / ارجاع)
+      // ✅ إنقاص الكمية فقط إذا كانت الحالة ليست (غير مؤكدة / ارجاع)
       if (shouldDecreaseStock) {
         foundSize.quantity = Math.max(foundSize.quantity - item.quantity, 0);
       }
@@ -129,12 +128,14 @@ exports.createOrder = async (req, res) => {
         await Product.updateOne(
           { _id: item.product, "colors.sizes.barcode": item.barcode },
           { $inc: { "colors.$[].sizes.$[s].quantity": -item.quantity } },
-          { arrayFilters: [{ "s.barcode": item.barcode }] }
+          { arrayFilters: [{ "s.barcode": item.barcode }] },
         );
       }
     }
 
-    res.status(201).json({ success: true, data: newOrder, message : "تم إنشاء طلبية بنجاح" });
+    res
+      .status(201)
+      .json({ success: true, data: newOrder, message: "تم إنشاء طلبية بنجاح" });
   } catch (err) {
     console.error("Error creating order:", err);
     res
@@ -158,12 +159,9 @@ exports.updateOrderStatus = async (req, res) => {
     order.status = status;
     await order.save();
 
-    const shouldDecreaseNew =
-      status !== "غير مؤكدة" && status !== "مؤكدة" && status !== "ارجاع";
+    const shouldDecreaseNew = status !== "غير مؤكدة" && status !== "ارجاع";
     const shouldDecreaseOld =
-      oldStatus !== "غير مؤكدة" &&
-      oldStatus !== "مؤكدة" &&
-      oldStatus !== "ارجاع";
+      oldStatus !== "غير مؤكدة" && oldStatus !== "ارجاع";
 
     // ✅ إذا كانت الحالة الجديدة يجب أن تنقص المخزون والحالة القديمة لا
     if (shouldDecreaseNew && !shouldDecreaseOld) {
@@ -172,19 +170,19 @@ exports.updateOrderStatus = async (req, res) => {
           item.product,
           item.barcode,
           -item.quantity,
-          true
+          true,
         );
       }
     }
 
-    // ✅ إذا كانت الحالة القديمة ناقصة المخزون والحالة الجديدة رجعت إلى غير مؤكدة / مؤكدة / ارجاع
+    // ✅ إذا كانت الحالة القديمة ناقصة المخزون والحالة الجديدة رجعت إلى غير مؤكدة / ارجاع
     if (!shouldDecreaseNew && shouldDecreaseOld) {
       for (const item of order.items) {
         await updateProductStock(
           item.product,
           item.barcode,
           item.quantity,
-          true
+          true,
         );
       }
     }
