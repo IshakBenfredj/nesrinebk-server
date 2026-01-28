@@ -37,7 +37,7 @@ exports.createProduct = async (req, res) => {
     }
 
     const invalidColors = colors.some(
-      (color) => !color.sizes || color.sizes.length === 0
+      (color) => !color.sizes || color.sizes.length === 0,
     );
     if (invalidColors) {
       return res.status(400).json({
@@ -53,10 +53,10 @@ exports.createProduct = async (req, res) => {
         let uploadedImages = [];
         if (Array.isArray(color.images)) {
           const imagesToUpload = color.images.filter((img) =>
-            img.startsWith("data:")
+            img.startsWith("data:"),
           );
           const alreadyUploaded = color.images.filter(
-            (img) => !img.startsWith("data:")
+            (img) => !img.startsWith("data:"),
           );
           if (imagesToUpload.length > 0) {
             const result = await uploadMultipleImages(imagesToUpload);
@@ -73,7 +73,7 @@ exports.createProduct = async (req, res) => {
             barcode: size.barcode || generateBarcode(),
           })),
         };
-      })
+      }),
     );
 
     const product = new Product({
@@ -226,7 +226,10 @@ exports.getProducts = async (req, res) => {
     const { category, color, search, minPrice, maxPrice } = req.query;
     const query = {};
 
-    if (category) query.category = category;
+    if (category) {
+      // Updated: If category is provided, use $in operator since categories are now an array
+      query.category = { $in: [category] }; // Assuming category is a single ID; adjust if multiple
+    }
     if (color) query["colors.color"] = color;
     if (search) query.$text = { $search: search };
     if (minPrice || maxPrice) {
@@ -236,6 +239,7 @@ exports.getProducts = async (req, res) => {
     }
 
     const products = await Product.find(query)
+      // Updated: Populate categories (plural)
       .populate("category", "name")
       .sort({ createdAt: -1 });
 
@@ -256,8 +260,9 @@ exports.getProducts = async (req, res) => {
 exports.getProductById = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id).populate(
+      // Updated: Populate categories (plural)
       "category",
-      "name"
+      "name",
     );
     if (!product) {
       return res.status(404).json({
@@ -405,6 +410,8 @@ exports.updateProduct = async (req, res) => {
       !price ||
       !originalPrice ||
       !category ||
+      !Array.isArray(category) ||
+      category.length === 0 ||
       !colors ||
       colors.length === 0
     ) {
@@ -427,14 +434,14 @@ exports.updateProduct = async (req, res) => {
     const processedColors = await Promise.all(
       colors.map(async (color) => {
         const existingColor = product.colors.find(
-          (c) => c.color === color.color
+          (c) => c.color === color.color,
         );
 
         const base64Images = (color.images || []).filter((img) =>
-          img.startsWith("data:")
+          img.startsWith("data:"),
         );
         const retainedImages = (color.images || []).filter(
-          (img) => !img.startsWith("data:")
+          (img) => !img.startsWith("data:"),
         );
 
         const newUploadedImages =
@@ -444,10 +451,10 @@ exports.updateProduct = async (req, res) => {
 
         const previousImages = existingColor?.images || [];
         const removedImages = previousImages.filter(
-          (img) => !retainedImages.includes(img)
+          (img) => !retainedImages.includes(img),
         );
         await Promise.all(
-          removedImages.map((img) => deleteImageFromCloudinary(img))
+          removedImages.map((img) => deleteImageFromCloudinary(img)),
         );
 
         return {
@@ -455,7 +462,7 @@ exports.updateProduct = async (req, res) => {
           images: [...retainedImages, ...newUploadedImages],
           sizes: color.sizes.map((size) => {
             const existingSize = existingColor?.sizes?.find(
-              (s) => s.size === size.size
+              (s) => s.size === size.size,
             );
             return {
               ...size,
@@ -463,7 +470,7 @@ exports.updateProduct = async (req, res) => {
             };
           }),
         };
-      })
+      }),
     );
 
     product.name = name;
@@ -643,7 +650,7 @@ exports.updateSizeQuantity = async (req, res) => {
     const sizeObj = product.colors[colorIdx].sizes[szIdx];
     const oldQuantity = sizeObj.quantity;
     console.log(
-      `Updating stock for product ${productId}, color ${colorIdx}, size ${sizeIndex}: ${oldQuantity} -> ${quantity}`
+      `Updating stock for product ${productId}, color ${colorIdx}, size ${sizeIndex}: ${oldQuantity} -> ${quantity}`,
     );
     sizeObj.quantity = quantity;
 

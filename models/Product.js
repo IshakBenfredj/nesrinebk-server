@@ -20,7 +20,7 @@ const SizeSchema = new mongoose.Schema(
       maxlength: 6,
     },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const ColorVariantSchema = new mongoose.Schema(
@@ -38,7 +38,7 @@ const ColorVariantSchema = new mongoose.Schema(
       type: [SizeSchema],
     },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const ProductSchema = new mongoose.Schema(
@@ -66,7 +66,7 @@ const ProductSchema = new mongoose.Schema(
       required: true,
     },
     category: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: [mongoose.Schema.Types.ObjectId],
       ref: "Category",
       required: true,
     },
@@ -79,7 +79,7 @@ const ProductSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 ProductSchema.index({ name: "text", description: "text" });
