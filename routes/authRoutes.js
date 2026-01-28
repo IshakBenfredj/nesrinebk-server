@@ -7,6 +7,7 @@ const {
   getUsers,
   editUser,
   deleteUser,
+  getUserHistory,
 } = require("../controllers/authController");
 const { protect, authorizeRoles } = require("../middleware/authMiddleware");
 
@@ -16,5 +17,5 @@ router.get("/users", protect, authorizeRoles("admin"), getUsers);
 router.put("/users/:id", protect, authorizeRoles("admin"), editUser);
 router.delete("/users/:id", protect, authorizeRoles("admin"), deleteUser);
 router.get("/me", protect, getProfile);
-
+router.get("/login-history", protect, authorizeRoles("admin"), getUserHistory);
 module.exports = router;

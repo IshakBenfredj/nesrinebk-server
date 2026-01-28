@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
+const LoginHistory = require("../models/LoginHistory");
 
 const generateToken = (user) => {
   return jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
@@ -26,20 +27,65 @@ exports.register = async (req, res) => {
 
 exports.login = async (req, res) => {
   const { phone, password } = req.body;
+
   try {
     const user = await User.findOne({ phone });
-    if (!user || !(await user.matchPassword(password)))
-      return res.status(500).json({ message: "بيانات الاعتماد غير صحيحة" });
+    if (!user || !(await user.matchPassword(password))) {
+      return res.status(401).json({
+        success: false,
+        message: "رقم الهاتف أو كلمة المرور غير صحيحة",
+      });
+    }
 
     const token = generateToken(user);
+
+    const ua = req.useragent; 
+
+    await LoginHistory.create({
+      user: user._id,
+      userName: user.name,
+      userPhone: user.phone,
+      role: user.role,
+      userAgent: req.headers["user-agent"] || "Unknown",
+      isMobile: ua.isMobile,
+      isTablet: ua.isTablet,
+      isDesktop: ua.isDesktop,
+      browser: ua.browser ? `${ua.browser} ${ua.version || ""}` : "Unknown",
+      os: ua.os ? `${ua.os} (${ua.platform || ""})` : "Unknown",
+      deviceBrand: getDeviceBrand(ua),
+      ipAddress: req.ip || req.connection.remoteAddress || "Unknown",
+    });
+
     res.json({
+      success: true,
       token,
       user,
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("Login error:", err);
+    res.status(500).json({ success: false, message: "خطأ في الخادم" });
   }
 };
+
+function getDeviceBrand(ua) {
+  const agent = (ua.browser || "").toLowerCase();
+  const os = (ua.os || "").toLowerCase();
+
+  if (ua.isMobile || ua.isTablet) {
+    if (os.includes("android")) return "Android Device";
+    if (os.includes("ios")) return "iPhone / iPad";
+    if (agent.includes("samsung")) return "Samsung";
+    if (agent.includes("huawei")) return "Huawei";
+    if (agent.includes("xiaomi")) return "Xiaomi";
+    return "Mobile / Tablet";
+  }
+
+  // Desktop / Laptop
+  if (os.includes("windows")) return "Windows PC";
+  if (os.includes("mac")) return "Mac";
+  if (os.includes("linux")) return "Linux PC";
+  return "Desktop / Laptop";
+}
 
 exports.getProfile = async (req, res) => {
   const user = await User.findById(req.user._id).select("-password");
@@ -166,5 +212,40 @@ exports.deleteUser = async (req, res) => {
       success: false,
       message: "حدث خطأ أثناء حذف المستخدم",
     });
+  }
+};
+
+// controllers/authController.js
+exports.getUserHistory = async (req, res) => {
+  try {
+    const { userId } = req.query;
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const query = {
+      loginTime: { $gte: todayStart, $lte: todayEnd },
+    };
+
+    if (userId) {
+      query.user = userId;
+    }
+
+    const history = await LoginHistory.find(query)
+      .populate("user", "name phone role")
+      .sort({ loginTime: -1 })
+      .lean(); // faster query
+
+    res.json({
+      success: true,
+      count: history.length,
+      data: history,
+    });
+  } catch (err) {
+    console.error("Error fetching login history:", err);
+    res.status(500).json({ success: false, message: "خطأ في الخادم" });
   }
 };
