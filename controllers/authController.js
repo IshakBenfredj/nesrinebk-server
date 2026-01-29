@@ -2,6 +2,7 @@ const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const LoginHistory = require("../models/LoginHistory");
+const { default: mongoose } = require("mongoose");
 
 const generateToken = (user) => {
   return jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
@@ -218,26 +219,74 @@ exports.deleteUser = async (req, res) => {
 // controllers/authController.js
 exports.getUserHistory = async (req, res) => {
   try {
-    const { userId } = req.query;
+    const { userId, startDate, endDate, today } = req.query;
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
-    const query = {
-      loginTime: { $gte: todayStart, $lte: todayEnd },
-    };
+    const query = {};
 
     if (userId) {
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({
+          success: false,
+          message: "معرف المستخدم غير صالح",
+        });
+      }
       query.user = userId;
+    }
+
+    let dateFilter = null;
+
+    if (today === "true" || today === true) {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+      dateFilter = { loginTime: { $gte: todayStart, $lte: todayEnd } };
+    } else if (startDate || endDate) {
+      let start = startDate ? new Date(startDate) : null;
+      let end = endDate ? new Date(endDate) : null;
+
+      // Validate only if provided
+      if (startDate && isNaN(start?.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "صيغة تاريخ البداية غير صالحة",
+        });
+      }
+      if (endDate && isNaN(end?.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "صيغة تاريخ النهاية غير صالحة",
+        });
+      }
+
+      // Single day if only start
+      if (start && !end) {
+        start.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(start);
+        endOfDay.setHours(23, 59, 59, 999);
+        dateFilter = { loginTime: { $gte: start, $lte: endOfDay } };
+      }
+      // From beginning to end day if only end
+      else if (!start && end) {
+        end.setHours(23, 59, 59, 999);
+        dateFilter = { loginTime: { $lte: end } };
+      }
+      // Full range
+      else if (start && end) {
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+        dateFilter = { loginTime: { $gte: start, $lte: end } };
+      }
+    }
+
+    if (dateFilter) {
+      Object.assign(query, dateFilter);
     }
 
     const history = await LoginHistory.find(query)
       .populate("user", "name phone role")
       .sort({ loginTime: -1 })
-      .lean(); // faster query
+      .lean();
 
     res.json({
       success: true,
