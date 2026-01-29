@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const loginHistorySchema = new mongoose.Schema(
+const authHistorySchema = new mongoose.Schema(
   {
     user: {
       type: mongoose.Schema.Types.ObjectId,
@@ -8,20 +8,7 @@ const loginHistorySchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    userName: {
-      type: String,
-      required: true,
-    },
-    userPhone: {
-      type: String,
-      required: true,
-    },
-    role: {
-      type: String,
-      enum: ["admin", "social_media", "worker"],
-      required: true,
-    },
-    loginTime: {
+    time: {
       type: Date,
       default: Date.now,
       required: true,
@@ -36,13 +23,17 @@ const loginHistorySchema = new mongoose.Schema(
     browser: String,
     os: String,
     deviceBrand: String,
-    ipAddress: String,
+    type: {
+      type: String,
+      enum: ["login", "logout", "tab_closed"],
+      required: true,
+    },
   },
   {
     timestamps: true,
   },
 );
 
-loginHistorySchema.index({ user: 1, loginTime: -1 });
+authHistorySchema.index({ user: 1, time: -1 });
 
-module.exports = mongoose.model("LoginHistory", loginHistorySchema);
+module.exports = mongoose.model("AuthHistory", authHistorySchema);

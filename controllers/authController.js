@@ -1,7 +1,7 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
-const LoginHistory = require("../models/LoginHistory");
+const AuthHistory = require("../models/AuthHistory");
 const { default: mongoose } = require("mongoose");
 
 const generateToken = (user) => {
@@ -40,13 +40,10 @@ exports.login = async (req, res) => {
 
     const token = generateToken(user);
 
-    const ua = req.useragent; 
+    const ua = req.useragent;
 
-    await LoginHistory.create({
+    await AuthHistory.create({
       user: user._id,
-      userName: user.name,
-      userPhone: user.phone,
-      role: user.role,
       userAgent: req.headers["user-agent"] || "Unknown",
       isMobile: ua.isMobile,
       isTablet: ua.isTablet,
@@ -54,7 +51,7 @@ exports.login = async (req, res) => {
       browser: ua.browser ? `${ua.browser} ${ua.version || ""}` : "Unknown",
       os: ua.os ? `${ua.os} (${ua.platform || ""})` : "Unknown",
       deviceBrand: getDeviceBrand(ua),
-      ipAddress: req.ip || req.connection.remoteAddress || "Unknown",
+      type: "login",
     });
 
     res.json({
@@ -65,6 +62,36 @@ exports.login = async (req, res) => {
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ success: false, message: "خطأ في الخادم" });
+  }
+};
+
+exports.logout = async (req, res) => {
+  try {
+    const { tabClosed } = req.body;
+    const ua = req.useragent;
+
+    await AuthHistory.create({
+      user: req.user._id,
+      userAgent: req.headers["user-agent"] || "Unknown",
+      isMobile: ua.isMobile,
+      isTablet: ua.isTablet,
+      isDesktop: ua.isDesktop,
+      browser: ua.browser ? `${ua.browser} ${ua.version || ""}` : "Unknown",
+      os: ua.os ? `${ua.os} (${ua.platform || ""})` : "Unknown",
+      deviceBrand: getDeviceBrand(ua),
+      type: tabClosed ? "tab_closed" : "logout",
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "تم تسجيل الخروج بنجاح",
+    });
+  } catch (err) {
+    console.error("Logout error:", err);
+    res.status(500).json({
+      success: false,
+      message: "خطأ أثناء تسجيل الخروج",
+    });
   }
 };
 
@@ -219,10 +246,11 @@ exports.deleteUser = async (req, res) => {
 // controllers/authController.js
 exports.getUserHistory = async (req, res) => {
   try {
-    const { userId, startDate, endDate, today } = req.query;
+    const { userId, startDate, endDate, today, type } = req.query;
 
     const query = {};
 
+    // === 1. Filtre par utilisateur (optionnel) ===
     if (userId) {
       if (!mongoose.Types.ObjectId.isValid(userId)) {
         return res.status(400).json({
@@ -233,60 +261,74 @@ exports.getUserHistory = async (req, res) => {
       query.user = userId;
     }
 
+    // === 2. Filtre par type (login / logout) ===
+    if (type && ["login", "logout"].includes(type)) {
+      query.type = type;
+    }
+
+    // === 3. Filtre par date ===
     let dateFilter = null;
 
+    // Cas 1 : Aujourd'hui uniquement
     if (today === "true" || today === true) {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
       const todayEnd = new Date();
       todayEnd.setHours(23, 59, 59, 999);
-      dateFilter = { loginTime: { $gte: todayStart, $lte: todayEnd } };
-    } else if (startDate || endDate) {
+
+      dateFilter = { time: { $gte: todayStart, $lte: todayEnd } };
+    }
+    // Cas 2 : Intervalle personnalisé
+    else if (startDate || endDate) {
       let start = startDate ? new Date(startDate) : null;
       let end = endDate ? new Date(endDate) : null;
 
-      // Validate only if provided
+      // Validation des dates
       if (startDate && isNaN(start?.getTime())) {
         return res.status(400).json({
           success: false,
-          message: "صيغة تاريخ البداية غير صالحة",
+          message: "صيغة تاريخ البداية غير صالحة (استخدم YYYY-MM-DD)",
         });
       }
       if (endDate && isNaN(end?.getTime())) {
         return res.status(400).json({
           success: false,
-          message: "صيغة تاريخ النهاية غير صالحة",
+          message: "صيغة تاريخ النهاية غير صالحة (استخدم YYYY-MM-DD)",
         });
       }
 
-      // Single day if only start
+      // Cas : seulement startDate → toute la journée
       if (start && !end) {
         start.setHours(0, 0, 0, 0);
         const endOfDay = new Date(start);
         endOfDay.setHours(23, 59, 59, 999);
-        dateFilter = { loginTime: { $gte: start, $lte: endOfDay } };
+        dateFilter = { time: { $gte: start, $lte: endOfDay } };
       }
-      // From beginning to end day if only end
+      // Cas : seulement endDate → jusqu'à la fin de ce jour
       else if (!start && end) {
         end.setHours(23, 59, 59, 999);
-        dateFilter = { loginTime: { $lte: end } };
+        dateFilter = { time: { $lte: end } };
       }
-      // Full range
+      // Cas : les deux dates → intervalle complet
       else if (start && end) {
         start.setHours(0, 0, 0, 0);
         end.setHours(23, 59, 59, 999);
-        dateFilter = { loginTime: { $gte: start, $lte: end } };
+        dateFilter = { time: { $gte: start, $lte: end } };
       }
     }
+    // Pas de filtre de date → tout l'historique
 
     if (dateFilter) {
       Object.assign(query, dateFilter);
     }
 
-    const history = await LoginHistory.find(query)
+    // === 4. Exécution de la requête ===
+    const history = await AuthHistory.find(query)
       .populate("user", "name phone role")
-      .sort({ loginTime: -1 })
+      .sort({ time: -1 })
       .lean();
+
+    console.log("Fetched auth history:", history.length, "records");
 
     res.json({
       success: true,
@@ -294,7 +336,10 @@ exports.getUserHistory = async (req, res) => {
       data: history,
     });
   } catch (err) {
-    console.error("Error fetching login history:", err);
-    res.status(500).json({ success: false, message: "خطأ في الخادم" });
+    console.error("Error fetching auth history:", err);
+    res.status(500).json({
+      success: false,
+      message: "خطأ في الخادم",
+    });
   }
 };

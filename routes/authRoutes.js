@@ -8,11 +8,13 @@ const {
   editUser,
   deleteUser,
   getUserHistory,
+  logout,
 } = require("../controllers/authController");
 const { protect, authorizeRoles } = require("../middleware/authMiddleware");
 
 router.post("/register", register);
 router.post("/login", login);
+router.post("/logout",protect, logout);
 router.get("/users", protect, authorizeRoles("admin"), getUsers);
 router.put("/users/:id", protect, authorizeRoles("admin"), editUser);
 router.delete("/users/:id", protect, authorizeRoles("admin"), deleteUser);
