@@ -302,7 +302,8 @@ exports.getOrders = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .populate("createdBy", "name");
+      .populate("createdBy", "name")
+      .populate("items.product", "name");
 
     const total = await Order.countDocuments(query);
 
