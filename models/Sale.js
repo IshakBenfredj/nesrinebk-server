@@ -37,7 +37,7 @@ const SaleItemSchema = new mongoose.Schema(
       min: 0,
     },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const ExchangeItemSchema = new mongoose.Schema(
@@ -59,7 +59,7 @@ const ExchangeItemSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const SaleSchema = new mongoose.Schema(
@@ -82,6 +82,17 @@ const SaleSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    totalBeforeExchange: {
+      type: Number,
+      min: 0,
+    },
+    originalTotalBeforeExchange: {
+      type: Number,
+      min: 0,
+    },
+    profitBeforeExchange: {
+      type: Number,
+      min: 0,},
     cashier: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -103,12 +114,17 @@ const SaleSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    discountAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for faster queries

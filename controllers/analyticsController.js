@@ -65,8 +65,8 @@ exports.getFullSummary = async (req, res) => {
         const matchDate = type === "day" ? createdDate === date : true;
         if (matchDate) {
           sale.items.forEach((item) => {
-            totalSales += item.price * item.quantity;
-            profitSales += (item.price - item.originalPrice) * item.quantity;
+            totalSales += (item.price * item.quantity) - (sale.discountAmount || 0);
+            profitSales += ((item.price - item.originalPrice) * item.quantity) - (sale.discountAmount || 0);
           });
         }
         return;
@@ -82,11 +82,11 @@ exports.getFullSummary = async (req, res) => {
         const originalMatch = type === "day" ? createdDate === date : true;
         if (originalMatch) {
           totalSales +=
-            exchange.originalItem.price * exchange.originalItem.quantity;
+            (exchange.originalItem.price * exchange.originalItem.quantity) - (sale.discountAmount || 0);
           profitSales +=
-            (exchange.originalItem.price -
+            ((exchange.originalItem.price -
               exchange.originalItem.originalPrice) *
-            exchange.originalItem.quantity;
+            exchange.originalItem.quantity) - (sale.discountAmount || 0);
         }
 
         // Exchange impact
@@ -187,21 +187,18 @@ exports.getFullSummary = async (req, res) => {
     allSales.forEach((sale) => {
       if (!sale.isExchanged) {
         sale.items.forEach((item) => {
-          allTimeSales += item.price * item.quantity;
+          allTimeSales += (item.price * item.quantity) - (sale.discountAmount || 0);
           allTimeSalesProfit +=
-            (item.price - item.originalPrice) * item.quantity;
+            ((item.price - item.originalPrice) * item.quantity) - (sale.discountAmount || 0);
         });
         return;
       }
 
       sale.exchanges.forEach((exchange) => {
         // Original sale
-        allTimeSales +=
-          exchange.originalItem.price * exchange.originalItem.quantity;
+        allTimeSales += (exchange.originalItem.price * exchange.originalItem.quantity) - (sale.discountAmount || 0);
         allTimeSalesProfit +=
-          (exchange.originalItem.price - exchange.originalItem.originalPrice) *
-          exchange.originalItem.quantity;
-
+          ((exchange.originalItem.price - exchange.originalItem.originalPrice) * exchange.originalItem.quantity) - (sale.discountAmount || 0);
         // Exchange adjustment
         allTimeSales += exchange.priceDifference;
         allTimeSalesProfit +=
@@ -835,14 +832,18 @@ exports.getSalesChannels = async (req, res) => {
 // ⚠️ Inventory Alerts
 exports.getInventoryAlerts = async (req, res) => {
   try {
-    const { minStockThreshold = 10, criticalThreshold = 5 } = req.query;
+    const { lowStockThreshold = 5 } = req.query; // default threshold = 5
 
+    // Low stock: quantity <= 5 AND quantity > 0
     const lowStockProducts = await Product.aggregate([
       { $unwind: "$colors" },
       { $unwind: "$colors.sizes" },
       {
         $match: {
-          "colors.sizes.quantity": { $lte: parseInt(minStockThreshold) },
+          $and: [
+            { "colors.sizes.quantity": { $gt: 0 } },                     // not zero
+            { "colors.sizes.quantity": { $lte: parseInt(lowStockThreshold) } }, // <= threshold
+          ],
         },
       },
       {
@@ -854,27 +855,19 @@ exports.getInventoryAlerts = async (req, res) => {
           quantity: "$colors.sizes.quantity",
           price: 1,
           originalPrice: 1,
-          status: {
-            $cond: {
-              if: {
-                $lte: ["$colors.sizes.quantity", parseInt(criticalThreshold)],
-              },
-              then: "critical",
-              else: "warning",
-            },
-          },
+          status: "low_stock", // fixed status
         },
       },
-      { $sort: { quantity: 1 } },
+      { $sort: { quantity: 1 } }, // lowest first
     ]);
 
-    // Out of stock products
+    // Out of stock: quantity exactly 0
     const outOfStockProducts = await Product.aggregate([
       { $unwind: "$colors" },
       { $unwind: "$colors.sizes" },
       {
         $match: {
-          "colors.sizes.quantity": { $eq: 0 },
+          "colors.sizes.quantity": 0,
         },
       },
       {
@@ -889,6 +882,7 @@ exports.getInventoryAlerts = async (req, res) => {
           status: "out_of_stock",
         },
       },
+      { $sort: { name: 1 } }, // alphabetical for out-of-stock
     ]);
 
     res.json({
@@ -898,15 +892,16 @@ exports.getInventoryAlerts = async (req, res) => {
       summary: {
         lowStockCount: lowStockProducts.length,
         outOfStockCount: outOfStockProducts.length,
-        criticalCount: lowStockProducts.filter((p) => p.status === "critical")
-          .length,
+        // No critical count anymore
+        totalAlerts: lowStockProducts.length + outOfStockProducts.length,
       },
     });
   } catch (error) {
     console.error("Error in getInventoryAlerts:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "خطأ في جلب تنبيهات المخزون" });
+    res.status(500).json({
+      success: false,
+      message: "خطأ في جلب تنبيهات المخزون",
+    });
   }
 };
 
