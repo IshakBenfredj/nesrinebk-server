@@ -367,6 +367,7 @@ exports.updateOrderStatus = async (req, res) => {
   }
 };
 
+// PUT /orders/:id
 exports.updateOrder = async (req, res) => {
   try {
     const { id } = req.params;
@@ -379,53 +380,139 @@ exports.updateOrder = async (req, res) => {
       items,
       notes,
       isPaid,
+      status,
+      originalTotal,
+      total,
+      profit,
+      discountAmount = 0,
     } = req.body;
 
     const order = await Order.findById(id);
-    if (!order)
-      return res
-        .status(404)
-        .json({ success: false, message: "الطلبية غير موجودة" });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "الطلبية غير موجودة" });
+    }
 
-    // ✅ تحقق من نوع التوصيل
+    // Validate required fields
+    if (!items || items.length === 0) {
+      return res.status(400).json({ success: false, message: "المنتجات مطلوبة" });
+    }
+
+    if (!deliveryType || !["مكتب", "منزل"].includes(deliveryType)) {
+      return res.status(400).json({ success: false, message: "نوع التوصيل غير صالح" });
+    }
+
+    if (deliveryType === "منزل" && (!address || address.trim() === "")) {
+      return res.status(400).json({ success: false, message: "العنوان مطلوب للتوصيل للمنزل" });
+    }
+
+    // Financial validation
     if (
-      deliveryType &&
-      deliveryType === "منزل" &&
-      (!address || address.trim() === "")
+      typeof originalTotal !== "number" ||
+      typeof total !== "number" ||
+      typeof profit !== "number" ||
+      originalTotal < 0 ||
+      total < 0 ||
+      profit < 0 ||
+      discountAmount < 0 ||
+      discountAmount > originalTotal
     ) {
-      return res.status(400).json({
-        success: false,
-        message: "العنوان مطلوب في حالة التوصيل للمنزل",
-      });
+      return res.status(400).json({ success: false, message: "البيانات المالية غير صالحة" });
     }
 
-    // ✅ تحديث الحقول
-    order.fullName = fullName || order.fullName;
-    order.phone = phone || order.phone;
-    order.state = state || order.state;
-    order.deliveryType = deliveryType || order.deliveryType;
-    order.address = deliveryType === "منزل" ? address : "";
-    order.notes = notes || order.notes;
-    order.isPaid = isPaid ?? order.isPaid;
+    // Stock rollback (add back old quantities if stock was decreased)
+    const oldShouldDecrease = order.status !== "غير مؤكدة" && order.status !== "ارجاع";
+    const newShouldDecrease = status !== "غير مؤكدة" && status !== "ارجاع";
 
-    // ✅ تحديث العناصر وحساب المجموع
-    if (items && items.length > 0) {
-      let totalPrice = 0;
-      for (const item of items) {
-        totalPrice += item.quantity * item.price;
+    if (oldShouldDecrease) {
+      // Add back old stock (rollback)
+      for (const item of order.items) {
+        await Product.updateOne(
+          { _id: item.product, "colors.sizes.barcode": item.barcode },
+          { $inc: { "colors.$[].sizes.$[s].quantity": item.quantity } },
+          { arrayFilters: [{ "s.barcode": item.barcode }] }
+        );
       }
-      order.items = items;
-      order.totalPrice = totalPrice;
     }
 
-    await order.save();
+    // Validate new items stock
+    for (const item of items) {
+      const product = await Product.findById(item.product);
+      if (!product) return res.status(404).json({ success: false, message: "منتج غير موجود" });
 
-    res.json({ success: true, data: order });
+      const foundSize = product.colors
+        .flatMap(c => c.sizes)
+        .find(s => s.barcode === item.barcode);
+
+      if (!foundSize) return res.status(400).json({ success: false, message: "باركود غير موجود" });
+
+      // Check available stock (considering current reserved orders except this one)
+      const reserved = await Order.aggregate([
+        {
+          $match: {
+            _id: { $ne: order._id }, // exclude current order
+            status: { $in: ["غير مؤكدة", "مؤكدة"] },
+            "items.barcode": item.barcode,
+          },
+        },
+        { $unwind: "$items" },
+        { $match: { "items.barcode": item.barcode } },
+        { $group: { _id: "$items.barcode", reservedQty: { $sum: "$items.quantity" } } },
+      ]);
+
+      const reservedQty = reserved[0]?.reservedQty || 0;
+      const available = foundSize.quantity - reservedQty;
+
+      if (item.quantity > available) {
+        return res.status(400).json({
+          success: false,
+          message: `الكمية غير متاحة لـ ${product.name} - متبقي ${available}`,
+        });
+      }
+    }
+
+    // Apply new stock decrease if needed
+    if (newShouldDecrease) {
+      for (const item of items) {
+        await Product.updateOne(
+          { _id: item.product, "colors.sizes.barcode": item.barcode },
+          { $inc: { "colors.$[].sizes.$[s].quantity": -item.quantity } },
+          { arrayFilters: [{ "s.barcode": item.barcode }] }
+        );
+      }
+    }
+
+    // Update order
+    const updatedOrder = await Order.findByIdAndUpdate(
+      id,
+      {
+        fullName,
+        phone,
+        state,
+        deliveryType,
+        address: deliveryType === "منزل" ? address : "",
+        items,
+        total,
+        originalTotal,
+        profit,
+        discountAmount,
+        notes,
+        isPaid,
+        status,
+      },
+      { new: true, runValidators: true }
+    );
+
+    res.json({
+      success: true,
+      data: updatedOrder,
+      message: "تم تحديث الطلبية بنجاح",
+    });
   } catch (err) {
     console.error("Error updating order:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "حدث خطأ أثناء تحديث الطلبية" });
+    res.status(500).json({
+      success: false,
+      message: err.message || "حدث خطأ أثناء تحديث الطلبية",
+    });
   }
 };
 
@@ -497,7 +584,7 @@ exports.getOrderById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const order = await Order.findById(id).populate("createdBy", "name");
+    const order = await Order.findById(id).populate("createdBy", "name").populate("items.product", "name originalPrice");
 
     if (!order) {
       return res
