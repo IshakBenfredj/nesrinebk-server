@@ -600,19 +600,15 @@ exports.getFullSummary = async (req, res) => {
 
 exports.getTotalRevenue = async (req, res) => {
   try {
-    // ================================================
-    // 1. ALL-TIME SALES (من القيم المحفوظة فقط)
-    // ================================================
+    // 1. ALL-TIME SALES (use stored total – already after discount)
     const allSales = await Sale.find();
     let allTimeSales = 0;
 
     allSales.forEach((sale) => {
-      allTimeSales += sale.total;  // الإجمالي النهائي بعد التخفيض
+      allTimeSales += sale.total - (sale.discountAmount || 0);  // ← correct: already net of discount
     });
 
-    // ================================================
-    // 2. ALL-TIME ORDERS
-    // ================================================
+    // 2. ALL-TIME ORDERS (unchanged – no discount field in orders)
     const allOrders = await Order.find({
       $or: [{ status: "تم الاستلام" }, { isPaid: true }],
       status: { $ne: "ارجاع" },
@@ -621,14 +617,10 @@ exports.getTotalRevenue = async (req, res) => {
     let allTimeOrders = 0;
 
     allOrders.forEach((order) => {
-      order.items.forEach((item) => {
-        allTimeOrders += item.price * item.quantity;
-      });
+      allTimeOrders += order.total - (order.discountAmount || 0);
     });
 
-    // ================================================
-    // 3. ALL-TIME NON-FIXED EXPENSES (غير ثابتة، غير إدارية)
-    // ================================================
+    // 3. ALL-TIME NON-FIXED EXPENSES (unchanged)
     const nonFixedExpenses = await Expense.find({
       isFixed: false,
       admin: false,
@@ -639,18 +631,14 @@ exports.getTotalRevenue = async (req, res) => {
       0
     );
 
-    // ================================================
-    // 4. ALL-TIME REVENUE CHANGES
-    // ================================================
+    // 4. ALL-TIME REVENUE CHANGES (unchanged)
     const allRevenueChanges = await RevenueChanges.find({});
     const allTimeRevenueChanges = allRevenueChanges.reduce(
       (sum, r) => sum + r.amount,
       0
     );
 
-    // ================================================
-    // 5. الحساب النهائي للإيرادات الكلية
-    // ================================================
+    // 5. Final total revenue
     const totalRevenue =
       allTimeSales +
       allTimeOrders -
@@ -661,7 +649,7 @@ exports.getTotalRevenue = async (req, res) => {
       success: true,
       totalRevenue,
       breakdown: {
-        allTimeSales,
+        allTimeSales,               // ← after discounts
         allTimeOrders,
         allTimeNonFixedExpenses,
         allTimeRevenueChanges,
