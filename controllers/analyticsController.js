@@ -5,6 +5,314 @@ const Product = require("../models/Product");
 const RevenueChanges = require("../models/RevenuesChanges");
 const { endOfMonth, parseISO, isSameMonth } = require("date-fns");
 
+// exports.getFullSummary = async (req, res) => {
+//   try {
+//     const { date, type = "day" } = req.query;
+//     if (!date) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "يرجى تحديد التاريخ" });
+//     }
+
+//     let format;
+//     if (type === "day") format = "%Y-%m-%d";
+//     else if (type === "month") format = "%Y-%m";
+//     else if (type === "year") format = "%Y";
+
+//     const isLastDayOfMonth = (inputDate) => {
+//       const givenDate = parseISO(inputDate);
+//       const endDate = endOfMonth(givenDate);
+//       return (
+//         givenDate.toISOString().slice(0, 10) ===
+//         endDate.toISOString().slice(0, 10)
+//       );
+//     };
+
+//     const shortDate =
+//       type === "day"
+//         ? date
+//         : type === "month"
+//           ? date.slice(0, 7)
+//           : date.slice(0, 4);
+
+//     // ================================================
+//     // 1. DATE-FILTERED SALES CALCULATION
+//     // ================================================
+//     const sales = await Sale.find({
+//       $expr: {
+//         $or: [
+//           {
+//             $eq: [{ $dateToString: { format, date: "$createdAt" } }, shortDate],
+//           },
+//           {
+//             $eq: [{ $dateToString: { format, date: "$updatedAt" } }, shortDate],
+//           },
+//         ],
+//       },
+//     });
+
+//     let totalSales = 0;
+//     let profitSales = 0;
+
+//     sales.forEach((sale) => {
+//       const createdDate = sale.createdAt.toISOString().slice(0, 10);
+//       const updatedDate = sale.updatedAt.toISOString().slice(0, 10);
+//       const isSameDate = createdDate === updatedDate;
+
+//       // Case 1: Simple sale or same-day exchange
+//       if (!sale.isExchanged || isSameDate) {
+//         const matchDate = type === "day" ? createdDate === date : true;
+//         if (matchDate) {
+//           sale.items.forEach((item) => {
+//             totalSales += (item.price * item.quantity) - (sale.discountAmount || 0);
+//             profitSales += ((item.price - item.originalPrice) * item.quantity) - (sale.discountAmount || 0);
+//           });
+//         }
+//         return;
+//       }
+
+//       // Case 2: Cross-day exchange
+//       sale.exchanges.forEach((exchange) => {
+//         const exchangeDate = new Date(exchange.exchangedAt)
+//           .toISOString()
+//           .slice(0, 10);
+
+//         // Original sale impact
+//         const originalMatch = type === "day" ? createdDate === date : true;
+//         if (originalMatch) {
+//           totalSales +=
+//             (exchange.originalItem.price * exchange.originalItem.quantity) - (sale.discountAmount || 0);
+//           profitSales +=
+//             ((exchange.originalItem.price -
+//               exchange.originalItem.originalPrice) *
+//             exchange.originalItem.quantity) - (sale.discountAmount || 0);
+//         }
+
+//         // Exchange impact
+//         const exchangeMatch = type === "day" ? exchangeDate === date : true;
+//         if (exchangeMatch) {
+//           totalSales += exchange.priceDifference;
+//           profitSales +=
+//             (exchange.exchangedWith.price -
+//               exchange.exchangedWith.originalPrice) *
+//               exchange.exchangedWith.quantity -
+//             (exchange.originalItem.price -
+//               exchange.originalItem.originalPrice) *
+//               exchange.originalItem.quantity;
+//         }
+//       });
+//     });
+
+//     // ================================================
+//     // 2. DATE-FILTERED ORDERS CALCULATION
+//     // ================================================
+//     const orders = await Order.find({
+//       $expr: {
+//         $eq: [{ $dateToString: { format, date: "$updatedAt" } }, shortDate],
+//       },
+//       $or: [{ status: "تم الاستلام" }, { isPaid: true }],
+//       status: { $ne: "ارجاع" },
+//     }).populate("items.product", "originalPrice");
+
+//     let totalOrders = 0;
+//     let profitOrders = 0;
+
+//     orders.forEach((order) => {
+//       order.items.forEach((item) => {
+//         totalOrders += item.price * item.quantity;
+//         if (item.product?.originalPrice != null) {
+//           profitOrders +=
+//             (item.price - item.product.originalPrice) * item.quantity;
+//         }
+//       });
+//     });
+
+//     // ================================================
+//     // 3. DATE-FILTERED EXPENSES CALCULATION
+//     // ================================================
+//     const expenses = await Expense.find({});
+//     let totalExpenses = 0; // All expenses (for profit calculation)
+//     let totalNonFixedExpenses = 0; // Non-fixed, non-admin expenses (for revenue calculation)
+//     let adminExpenses = 0; // Admin expenses (only for profit calculation)
+
+//     expenses.forEach((exp) => {
+//       const createdAt = exp.createdAt.toISOString();
+//       const expDate = createdAt.slice(
+//         0,
+//         type === "day" ? 10 : type === "month" ? 7 : 4,
+//       );
+
+//       // Check if expense matches the date filter
+//       const dateMatches = expDate === shortDate;
+
+//       if (exp.admin) {
+//         // Admin expenses - only subtract from profit
+//         if (dateMatches) {
+//           adminExpenses += exp.amount;
+//           totalExpenses += exp.amount;
+//         }
+//       } else if (!exp.isFixed) {
+//         // Regular non-fixed expenses - subtract from both revenue and profit
+//         if (dateMatches) {
+//           totalNonFixedExpenses += exp.amount;
+//           totalExpenses += exp.amount;
+//         }
+//       } else {
+//         // Fixed expenses logic (daily/monthly/yearly)
+//         if (type === "day" && exp.recurrence === "daily") {
+//           totalExpenses += exp.amount;
+//         } else if (type === "month") {
+//           if (exp.recurrence === "daily") {
+//             totalExpenses += exp.amount;
+//           } else if (exp.recurrence === "monthly" && isLastDayOfMonth(date)) {
+//             if (isSameMonth(parseISO(date), exp.createdAt)) {
+//               totalExpenses += exp.amount;
+//             }
+//           }
+//         } else if (type === "year") {
+//           totalExpenses += exp.amount;
+//         }
+//       }
+//     });
+
+//     // ================================================
+//     // 4. ALL-TIME CALCULATIONS (for totalRevenue)
+//     // ================================================
+//     // ALL-TIME SALES
+//     const allSales = await Sale.find();
+//     let allTimeSales = 0;
+//     let allTimeSalesProfit = 0;
+
+//     allSales.forEach((sale) => {
+//       if (!sale.isExchanged) {
+//         sale.items.forEach((item) => {
+//           allTimeSales += (item.price * item.quantity) - (sale.discountAmount || 0);
+//           allTimeSalesProfit +=
+//             ((item.price - item.originalPrice) * item.quantity) - (sale.discountAmount || 0);
+//         });
+//         return;
+//       }
+
+//       sale.exchanges.forEach((exchange) => {
+//         // Original sale
+//         allTimeSales += (exchange.originalItem.price * exchange.originalItem.quantity) - (sale.discountAmount || 0);
+//         allTimeSalesProfit +=
+//           ((exchange.originalItem.price - exchange.originalItem.originalPrice) * exchange.originalItem.quantity) - (sale.discountAmount || 0);
+//         // Exchange adjustment
+//         allTimeSales += exchange.priceDifference;
+//         allTimeSalesProfit +=
+//           (exchange.exchangedWith.price -
+//             exchange.exchangedWith.originalPrice) *
+//             exchange.exchangedWith.quantity -
+//           (exchange.originalItem.price - exchange.originalItem.originalPrice) *
+//             exchange.originalItem.quantity;
+//       });
+//     });
+
+//     // ALL-TIME ORDERS
+//     const allOrders = await Order.find({
+//       $or: [{ status: "تم الاستلام" }, { isPaid: true }],
+//       status: { $ne: "ارجاع" },
+//     }).populate("items.product", "originalPrice");
+
+//     let allTimeOrders = 0;
+//     let allTimeOrdersProfit = 0;
+
+//     allOrders.forEach((order) => {
+//       order.items.forEach((item) => {
+//         allTimeOrders += item.price * item.quantity;
+//         if (item.product?.originalPrice != null) {
+//           allTimeOrdersProfit +=
+//             (item.price - item.product.originalPrice) * item.quantity;
+//         }
+//       });
+//     });
+
+//     // ALL-TIME NON-FIXED EXPENSES (excluding admin expenses)
+//     const nonFixedExpenses = await Expense.find({
+//       isFixed: false,
+//       admin: false,
+//     });
+//     const allTimeNonFixedExpenses = nonFixedExpenses.reduce(
+//       (sum, exp) => sum + exp.amount,
+//       0,
+//     );
+
+//     // ALL-TIME REVENUE CHANGES
+//     const allRevenueChanges = await RevenueChanges.find({});
+//     const allTimeRevenueChanges = allRevenueChanges.reduce(
+//       (sum, r) => sum + r.amount,
+//       0,
+//     );
+
+//     // ================================================
+//     // 5. FINAL CALCULATIONS
+//     // ================================================
+//     const turnover = totalSales + totalOrders;
+//     const totalRevenue =
+//       allTimeSales +
+//       allTimeOrders -
+//       allTimeNonFixedExpenses +
+//       allTimeRevenueChanges;
+//     const netProfit = profitSales + profitOrders - totalExpenses;
+
+//     // CAPITAL CALCULATION
+//     const products = await Product.find({});
+//     let totalOCapital = 0;
+//     let totalCapital = 0;
+//     products.forEach((product) => {
+//       product.colors.forEach((colorVariant) => {
+//         colorVariant.sizes.forEach((size) => {
+//           totalOCapital += size.quantity * product.originalPrice;
+//         });
+//       });
+//     });
+//     products.forEach((product) => {
+//       product.colors.forEach((colorVariant) => {
+//         colorVariant.sizes.forEach((size) => {
+//           totalCapital += size.quantity * product.price;
+//         });
+//       });
+//     });
+
+//     res.json({
+//       success: true,
+//       date,
+//       type,
+//       sales: {
+//         totalSales,
+//         profitSales,
+//         allTimeSales,
+//         allTimeSalesProfit,
+//       },
+//       orders: {
+//         totalOrders,
+//         profitOrders,
+//         allTimeOrders,
+//         allTimeOrdersProfit,
+//       },
+//       expenses: {
+//         dateFiltered: totalExpenses,
+//         adminExpenses,
+//         allTimeNonFixed: allTimeNonFixedExpenses,
+//       },
+//       revenueChanges: allTimeRevenueChanges,
+//       capital: {
+//         totalCapital,
+//         totalOCapital
+//       },
+//       totals: {
+//         turnover,
+//         totalRevenue,
+//         netProfit,
+//       },
+//     });
+//   } catch (err) {
+//     console.error("❌ Error in getFullSummary:", err);
+//     res.status(500).json({ success: false, message: "خطأ في حساب الملخص" });
+//   }
+// };
+
 exports.getFullSummary = async (req, res) => {
   try {
     const { date, type = "day" } = req.query;
@@ -14,7 +322,6 @@ exports.getFullSummary = async (req, res) => {
         .json({ success: false, message: "يرجى تحديد التاريخ" });
     }
 
-    // Determine date format based on type
     let format;
     if (type === "day") format = "%Y-%m-%d";
     else if (type === "month") format = "%Y-%m";
@@ -64,10 +371,8 @@ exports.getFullSummary = async (req, res) => {
       if (!sale.isExchanged || isSameDate) {
         const matchDate = type === "day" ? createdDate === date : true;
         if (matchDate) {
-          sale.items.forEach((item) => {
-            totalSales += (item.price * item.quantity) - (sale.discountAmount || 0);
-            profitSales += ((item.price - item.originalPrice) * item.quantity) - (sale.discountAmount || 0);
-          });
+          totalSales += sale.total - (sale.discountAmount || 0);
+          profitSales += sale.profit - (sale.discountAmount || 0);
         }
         return;
       }
@@ -81,25 +386,19 @@ exports.getFullSummary = async (req, res) => {
         // Original sale impact
         const originalMatch = type === "day" ? createdDate === date : true;
         if (originalMatch) {
-          totalSales +=
-            (exchange.originalItem.price * exchange.originalItem.quantity) - (sale.discountAmount || 0);
-          profitSales +=
-            ((exchange.originalItem.price -
-              exchange.originalItem.originalPrice) *
-            exchange.originalItem.quantity) - (sale.discountAmount || 0);
+          totalSales += sale.totalBeforeExchange - (sale.discountAmount || 0);
+          profitSales += sale.profitBeforeExchange - (sale.discountAmount || 0);
         }
 
         // Exchange impact
         const exchangeMatch = type === "day" ? exchangeDate === date : true;
         if (exchangeMatch) {
-          totalSales += exchange.priceDifference;
+          totalSales +=
+            sale.totalBeforeExchange - sale.total - (sale.discountAmount || 0);
           profitSales +=
-            (exchange.exchangedWith.price -
-              exchange.exchangedWith.originalPrice) *
-              exchange.exchangedWith.quantity -
-            (exchange.originalItem.price -
-              exchange.originalItem.originalPrice) *
-              exchange.originalItem.quantity;
+            sale.profitBeforeExchange -
+            sale.profit -
+            (sale.discountAmount || 0);
         }
       });
     });
@@ -176,9 +475,6 @@ exports.getFullSummary = async (req, res) => {
       }
     });
 
-    // ================================================
-    // 4. ALL-TIME CALCULATIONS (for totalRevenue)
-    // ================================================
     // ALL-TIME SALES
     const allSales = await Sale.find();
     let allTimeSales = 0;
@@ -186,27 +482,15 @@ exports.getFullSummary = async (req, res) => {
 
     allSales.forEach((sale) => {
       if (!sale.isExchanged) {
-        sale.items.forEach((item) => {
-          allTimeSales += (item.price * item.quantity) - (sale.discountAmount || 0);
-          allTimeSalesProfit +=
-            ((item.price - item.originalPrice) * item.quantity) - (sale.discountAmount || 0);
-        });
+        allTimeSales += sale.total - (sale.discountAmount || 0);
+        allTimeSalesProfit += sale.profit - (sale.discountAmount || 0);
         return;
       }
 
       sale.exchanges.forEach((exchange) => {
         // Original sale
-        allTimeSales += (exchange.originalItem.price * exchange.originalItem.quantity) - (sale.discountAmount || 0);
-        allTimeSalesProfit +=
-          ((exchange.originalItem.price - exchange.originalItem.originalPrice) * exchange.originalItem.quantity) - (sale.discountAmount || 0);
-        // Exchange adjustment
-        allTimeSales += exchange.priceDifference;
-        allTimeSalesProfit +=
-          (exchange.exchangedWith.price -
-            exchange.exchangedWith.originalPrice) *
-            exchange.exchangedWith.quantity -
-          (exchange.originalItem.price - exchange.originalItem.originalPrice) *
-            exchange.originalItem.quantity;
+        allTimeSales += sale.total - (sale.discountAmount || 0);
+        allTimeSalesProfit += sale.profit - (sale.discountAmount || 0);
       });
     });
 
@@ -255,7 +539,7 @@ exports.getFullSummary = async (req, res) => {
       allTimeOrders -
       allTimeNonFixedExpenses +
       allTimeRevenueChanges;
-    const netProfit = profitSales + profitOrders - totalExpenses; 
+    const netProfit = profitSales + profitOrders - totalExpenses;
 
     // CAPITAL CALCULATION
     const products = await Product.find({});
@@ -300,7 +584,7 @@ exports.getFullSummary = async (req, res) => {
       revenueChanges: allTimeRevenueChanges,
       capital: {
         totalCapital,
-        totalOCapital
+        totalOCapital,
       },
       totals: {
         turnover,
@@ -311,6 +595,84 @@ exports.getFullSummary = async (req, res) => {
   } catch (err) {
     console.error("❌ Error in getFullSummary:", err);
     res.status(500).json({ success: false, message: "خطأ في حساب الملخص" });
+  }
+};
+
+exports.getTotalRevenue = async (req, res) => {
+  try {
+    // ================================================
+    // 1. ALL-TIME SALES (من القيم المحفوظة فقط)
+    // ================================================
+    const allSales = await Sale.find();
+    let allTimeSales = 0;
+
+    allSales.forEach((sale) => {
+      allTimeSales += sale.total;  // الإجمالي النهائي بعد التخفيض
+    });
+
+    // ================================================
+    // 2. ALL-TIME ORDERS
+    // ================================================
+    const allOrders = await Order.find({
+      $or: [{ status: "تم الاستلام" }, { isPaid: true }],
+      status: { $ne: "ارجاع" },
+    });
+
+    let allTimeOrders = 0;
+
+    allOrders.forEach((order) => {
+      order.items.forEach((item) => {
+        allTimeOrders += item.price * item.quantity;
+      });
+    });
+
+    // ================================================
+    // 3. ALL-TIME NON-FIXED EXPENSES (غير ثابتة، غير إدارية)
+    // ================================================
+    const nonFixedExpenses = await Expense.find({
+      isFixed: false,
+      admin: false,
+    });
+
+    const allTimeNonFixedExpenses = nonFixedExpenses.reduce(
+      (sum, exp) => sum + exp.amount,
+      0
+    );
+
+    // ================================================
+    // 4. ALL-TIME REVENUE CHANGES
+    // ================================================
+    const allRevenueChanges = await RevenueChanges.find({});
+    const allTimeRevenueChanges = allRevenueChanges.reduce(
+      (sum, r) => sum + r.amount,
+      0
+    );
+
+    // ================================================
+    // 5. الحساب النهائي للإيرادات الكلية
+    // ================================================
+    const totalRevenue =
+      allTimeSales +
+      allTimeOrders -
+      allTimeNonFixedExpenses +
+      allTimeRevenueChanges;
+
+    res.json({
+      success: true,
+      totalRevenue,
+      breakdown: {
+        allTimeSales,
+        allTimeOrders,
+        allTimeNonFixedExpenses,
+        allTimeRevenueChanges,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Error in getTotalRevenue:", err);
+    res.status(500).json({
+      success: false,
+      message: "خطأ في حساب الإيرادات الكلية",
+    });
   }
 };
 
@@ -391,12 +753,10 @@ exports.getTopProducts = async (req, res) => {
     res.json({ success: true, topSales, topOrders });
   } catch (err) {
     console.error("❌ Error in getTopProducts:", err);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: err.message || "خطأ في جلب أفضل المنتجات",
-      });
+    res.status(500).json({
+      success: false,
+      message: err.message || "خطأ في جلب أفضل المنتجات",
+    });
   }
 };
 
@@ -841,7 +1201,7 @@ exports.getInventoryAlerts = async (req, res) => {
       {
         $match: {
           $and: [
-            { "colors.sizes.quantity": { $gt: 0 } },                     // not zero
+            { "colors.sizes.quantity": { $gt: 0 } }, // not zero
             { "colors.sizes.quantity": { $lte: parseInt(lowStockThreshold) } }, // <= threshold
           ],
         },

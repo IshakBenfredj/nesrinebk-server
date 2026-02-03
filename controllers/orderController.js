@@ -7,6 +7,143 @@ async function getNextOrderNumber() {
   return lastOrder ? lastOrder.orderNumber + 1 : 1;
 }
 
+// exports.createOrder = async (req, res) => {
+//   try {
+//     const {
+//       fullName,
+//       phone,
+//       state,
+//       deliveryType,
+//       address,
+//       items,
+//       notes,
+//       isPaid,
+//       status,
+//     } = req.body;
+
+//     if (!items || items.length === 0) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "محتوى الطلبية فارغ" });
+//     }
+
+//     if (!deliveryType || !["مكتب", "منزل"].includes(deliveryType)) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "نوع التوصيل غير صالح" });
+//     }
+
+//     if (deliveryType === "منزل" && (!address || address.trim() === "")) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "العنوان مطلوب في حالة التوصيل للمنزل",
+//       });
+//     }
+
+//     let totalPrice = 0;
+//     const shouldDecreaseStock = status !== "غير مؤكدة" && status !== "ارجاع";
+
+//     for (const item of items) {
+//       const product = await Product.findById(item.product);
+//       if (!product) {
+//         return res
+//           .status(404)
+//           .json({ success: false, message: "المنتج غير موجود" });
+//       }
+
+//       let foundSize = null;
+//       for (const color of product.colors) {
+//         for (const size of color.sizes) {
+//           if (size.barcode === item.barcode) {
+//             foundSize = size;
+//             break;
+//           }
+//         }
+//       }
+
+//       if (!foundSize) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `الباركود ${item.barcode} غير موجود`,
+//         });
+//       }
+
+//       // ✅ تحقق من الكمية المتاحة بناءً على الطلبات المحجوزة
+//       const reservedOrders = await Order.aggregate([
+//         {
+//           $match: {
+//             status: { $in: ["غير مؤكدة", "مؤكدة"] },
+//             "items.barcode": item.barcode,
+//           },
+//         },
+//         { $unwind: "$items" },
+//         { $match: { "items.barcode": item.barcode } },
+//         {
+//           $group: {
+//             _id: "$items.barcode",
+//             reservedQty: { $sum: "$items.quantity" },
+//           },
+//         },
+//       ]);
+
+//       const reservedQty =
+//         reservedOrders.length > 0 ? reservedOrders[0].reservedQty : 0;
+//       const availableQty = foundSize.quantity - reservedQty;
+
+//       if (item.quantity > availableQty) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `الكمية غير متوفرة للمنتج ${product.name}. المتبقي ${availableQty} بعد حجز الطلبات.`,
+//         });
+//       }
+
+//       totalPrice += item.quantity * item.price;
+
+//       // ✅ إنقاص الكمية فقط إذا كانت الحالة ليست (غير مؤكدة / ارجاع)
+//       if (shouldDecreaseStock) {
+//         foundSize.quantity = Math.max(foundSize.quantity - item.quantity, 0);
+//       }
+//     }
+
+//     const orderNumber = await getNextOrderNumber();
+
+//     const newOrder = await Order.create({
+//       fullName,
+//       phone,
+//       state,
+//       deliveryType,
+//       address: deliveryType === "منزل" ? address : "",
+//       orderNumber,
+//       items,
+//       totalPrice,
+//       notes,
+//       isPaid,
+//       status: status || "غير مؤكدة",
+//       createdBy: req.user._id,
+//     });
+
+//     // ✅ تحديث الكمية في قاعدة البيانات إذا يجب الخصم
+//     if (shouldDecreaseStock) {
+//       for (const item of items) {
+//         await Product.updateOne(
+//           { _id: item.product, "colors.sizes.barcode": item.barcode },
+//           { $inc: { "colors.$[].sizes.$[s].quantity": -item.quantity } },
+//           { arrayFilters: [{ "s.barcode": item.barcode }] },
+//         );
+//       }
+//     }
+
+//     res
+//       .status(201)
+//       .json({ success: true, data: newOrder, message: "تم إنشاء طلبية بنجاح" });
+//   } catch (err) {
+//     console.error("Error creating order:", err);
+//     res
+//       .status(500)
+//       .json({ success: false, message: "حدث خطأ أثناء إنشاء الطلبية" });
+//   }
+// };
+
 exports.createOrder = async (req, res) => {
   try {
     const {
@@ -18,7 +155,11 @@ exports.createOrder = async (req, res) => {
       items,
       notes,
       isPaid,
-      status,
+      status = "غير مؤكدة",
+      originalTotal,
+      total,
+      profit,
+      discountAmount = 0,
     } = req.body;
 
     if (!items || items.length === 0) {
@@ -40,8 +181,36 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    let totalPrice = 0;
-    const shouldDecreaseStock = status !== "غير مؤكدة" && status !== "ارجاع";
+    // Validate financial fields (sent from frontend)
+    if (
+      typeof originalTotal !== "number" ||
+      typeof total !== "number" ||
+      typeof profit !== "number" ||
+      originalTotal < 0 ||
+      total < 0 ||
+      profit < 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "البيانات المالية غير صالحة",
+      });
+    }
+
+    if (typeof discountAmount !== "number" || discountAmount < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "مبلغ التخفيض يجب أن يكون رقم موجب أو صفر",
+      });
+    }
+
+    if (discountAmount > originalTotal) {
+      return res.status(400).json({
+        success: false,
+        message: "مبلغ التخفيض لا يمكن أن يكون أكبر من الإجمالي الأصلي",
+      });
+    }
+
+    let shouldDecreaseStock = status !== "غير مؤكدة" && status !== "ارجاع";
 
     for (const item of items) {
       const product = await Product.findById(item.product);
@@ -59,6 +228,7 @@ exports.createOrder = async (req, res) => {
             break;
           }
         }
+        if (foundSize) break;
       }
 
       if (!foundSize) {
@@ -68,7 +238,7 @@ exports.createOrder = async (req, res) => {
         });
       }
 
-      // ✅ تحقق من الكمية المتاحة بناءً على الطلبات المحجوزة
+      // Check reserved quantity
       const reservedOrders = await Order.aggregate([
         {
           $match: {
@@ -97,9 +267,7 @@ exports.createOrder = async (req, res) => {
         });
       }
 
-      totalPrice += item.quantity * item.price;
-
-      // ✅ إنقاص الكمية فقط إذا كانت الحالة ليست (غير مؤكدة / ارجاع)
+      // Decrease stock if needed
       if (shouldDecreaseStock) {
         foundSize.quantity = Math.max(foundSize.quantity - item.quantity, 0);
       }
@@ -115,20 +283,23 @@ exports.createOrder = async (req, res) => {
       address: deliveryType === "منزل" ? address : "",
       orderNumber,
       items,
-      totalPrice,
+      total,
+      originalTotal,
+      profit,
+      discountAmount,
       notes,
       isPaid,
-      status: status || "غير مؤكدة",
+      status,
       createdBy: req.user._id,
     });
 
-    // ✅ تحديث الكمية في قاعدة البيانات إذا يجب الخصم
+    // Update stock in DB if needed
     if (shouldDecreaseStock) {
       for (const item of items) {
         await Product.updateOne(
           { _id: item.product, "colors.sizes.barcode": item.barcode },
           { $inc: { "colors.$[].sizes.$[s].quantity": -item.quantity } },
-          { arrayFilters: [{ "s.barcode": item.barcode }] },
+          { arrayFilters: [{ "s.barcode": item.barcode }] }
         );
       }
     }

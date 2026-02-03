@@ -30,7 +30,7 @@ const OrderItemSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const OrderSchema = new mongoose.Schema(
@@ -49,7 +49,21 @@ const OrderSchema = new mongoose.Schema(
     },
     orderNumber: { type: Number, required: true, unique: true },
     items: { type: [OrderItemSchema], required: true },
-    totalPrice: { type: Number, required: true, min: 0 },
+    total: { type: Number, required: true, min: 0 },
+    originalTotal: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    profit: {
+      type: Number,
+      required: true,
+    },
+    discountAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     notes: { type: String, default: "" },
     isPaid: { type: Boolean, default: false },
     status: {
@@ -63,7 +77,7 @@ const OrderSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 OrderSchema.pre("validate", function (next) {
