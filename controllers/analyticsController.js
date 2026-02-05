@@ -386,19 +386,15 @@ exports.getFullSummary = async (req, res) => {
         // Original sale impact
         const originalMatch = type === "day" ? createdDate === date : true;
         if (originalMatch) {
-          totalSales += sale.totalBeforeExchange - (sale.discountAmount || 0);
-          profitSales += sale.profitBeforeExchange - (sale.discountAmount || 0);
+          totalSales += sale.total - sale.totalBeforeExchange;
+          profitSales += sale.profit - sale.profitBeforeExchange;
         }
 
         // Exchange impact
         const exchangeMatch = type === "day" ? exchangeDate === date : true;
         if (exchangeMatch) {
-          totalSales +=
-            sale.totalBeforeExchange - sale.total - (sale.discountAmount || 0);
-          profitSales +=
-            sale.profitBeforeExchange -
-            sale.profit -
-            (sale.discountAmount || 0);
+          totalSales += sale.total - sale.totalBeforeExchange;
+          profitSales += sale.profit - sale.profitBeforeExchange;
         }
       });
     });
@@ -410,21 +406,21 @@ exports.getFullSummary = async (req, res) => {
       $expr: {
         $eq: [{ $dateToString: { format, date: "$updatedAt" } }, shortDate],
       },
-      $or: [{ status: "تم الاستلام" }, { isPaid: true }],
-      status: { $ne: "ارجاع" },
+      status: "تم الاستلام",
+      // If you still want to include paid but not delivered orders:
+      // $or: [
+      //   { status: "تم الاستلام" },
+      //   { isPaid: true, status: { $nin: ["تم الاستلام", "ارجاع"] } }
+      // ],
+      // status: { $ne: "ارجاع" }   // ← usually good to keep
     }).populate("items.product", "originalPrice");
 
     let totalOrders = 0;
     let profitOrders = 0;
 
     orders.forEach((order) => {
-      order.items.forEach((item) => {
-        totalOrders += item.price * item.quantity;
-        if (item.product?.originalPrice != null) {
-          profitOrders +=
-            (item.price - item.product.originalPrice) * item.quantity;
-        }
-      });
+      totalOrders += order.total - (order.discountAmount || 0);
+      profitOrders += order.profit - (order.discountAmount || 0);
     });
 
     // ================================================
@@ -487,11 +483,8 @@ exports.getFullSummary = async (req, res) => {
         return;
       }
 
-      sale.exchanges.forEach((exchange) => {
-        // Original sale
-        allTimeSales += sale.total - (sale.discountAmount || 0);
-        allTimeSalesProfit += sale.profit - (sale.discountAmount || 0);
-      });
+      allTimeSales += sale.total - sale.totalBeforeExchange;
+      allTimeSalesProfit += sale.profit - sale.profitBeforeExchange;
     });
 
     // ALL-TIME ORDERS
@@ -504,13 +497,8 @@ exports.getFullSummary = async (req, res) => {
     let allTimeOrdersProfit = 0;
 
     allOrders.forEach((order) => {
-      order.items.forEach((item) => {
-        allTimeOrders += item.price * item.quantity;
-        if (item.product?.originalPrice != null) {
-          allTimeOrdersProfit +=
-            (item.price - item.product.originalPrice) * item.quantity;
-        }
-      });
+      allTimeOrders += order.total - (order.discountAmount || 0);
+      allTimeOrdersProfit += order.profit - (order.discountAmount || 0);
     });
 
     // ALL-TIME NON-FIXED EXPENSES (excluding admin expenses)
@@ -535,11 +523,22 @@ exports.getFullSummary = async (req, res) => {
     // ================================================
     const turnover = totalSales + totalOrders;
     const totalRevenue =
-      allTimeSales +
-      allTimeOrders -
-      allTimeNonFixedExpenses +
-      allTimeRevenueChanges;
+      allTimeSales - allTimeNonFixedExpenses + allTimeRevenueChanges;
     const netProfit = profitSales + profitOrders - totalExpenses;
+    console.log("📊 Analytics Summary:");
+    console.log("Date:", date);
+    console.log("Type:", type);
+    console.log("Total Sales:", totalSales);
+    console.log("Profit from Sales:", profitSales);
+    console.log("Total Orders:", totalOrders);
+    console.log("Profit from Orders:", profitOrders);
+    console.log("Total Expenses:", totalExpenses);
+    console.log("Net Profit:", netProfit);
+    console.log("All-Time Sales:", allTimeSales);
+    console.log("Revenue Changes:", allTimeRevenueChanges);
+    console.log("All-Time Non Fixed Expenses:", allTimeNonFixedExpenses);
+    console.log("Total Revenue:", totalRevenue);
+    console.log("Turnover:", turnover);
 
     // CAPITAL CALCULATION
     const products = await Product.find({});
@@ -605,7 +604,7 @@ exports.getTotalRevenue = async (req, res) => {
     let allTimeSales = 0;
 
     allSales.forEach((sale) => {
-      allTimeSales += sale.total - (sale.discountAmount || 0);  // ← correct: already net of discount
+      allTimeSales += sale.total - (sale.discountAmount || 0); // ← correct: already net of discount
     });
 
     // 2. ALL-TIME ORDERS (unchanged – no discount field in orders)
@@ -628,14 +627,14 @@ exports.getTotalRevenue = async (req, res) => {
 
     const allTimeNonFixedExpenses = nonFixedExpenses.reduce(
       (sum, exp) => sum + exp.amount,
-      0
+      0,
     );
 
     // 4. ALL-TIME REVENUE CHANGES (unchanged)
     const allRevenueChanges = await RevenueChanges.find({});
     const allTimeRevenueChanges = allRevenueChanges.reduce(
       (sum, r) => sum + r.amount,
-      0
+      0,
     );
 
     // 5. Final total revenue
@@ -649,7 +648,7 @@ exports.getTotalRevenue = async (req, res) => {
       success: true,
       totalRevenue,
       breakdown: {
-        allTimeSales,               // ← after discounts
+        allTimeSales, // ← after discounts
         allTimeOrders,
         allTimeNonFixedExpenses,
         allTimeRevenueChanges,
