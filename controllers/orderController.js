@@ -539,7 +539,7 @@ exports.deleteOrder = async (req, res) => {
 
 exports.getOrders = async (req, res) => {
   try {
-    const { status, date, orderNumber, page = 1, limit = 10 } = req.query;
+    const { status, date, orderNumber } = req.query;
     const query = {};
 
     if (status) query.status = status;
@@ -558,8 +558,6 @@ exports.getOrders = async (req, res) => {
 
     const orders = await Order.find(query)
       .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit))
       .populate("createdBy", "name")
       .populate("items.product", "name");
 
