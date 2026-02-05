@@ -539,42 +539,104 @@ exports.deleteOrder = async (req, res) => {
 
 exports.getOrders = async (req, res) => {
   try {
-    const { status, date, orderNumber } = req.query;
+    const { status, date, orderNumber, page, limit } = req.query;
+
     const query = {};
 
-    if (status) query.status = status;
-
-    if (orderNumber) query.orderNumber = parseInt(orderNumber);
-
-    if (date) {
-      const startDate = new Date(date);
-      startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(date);
-      endDate.setHours(23, 59, 59, 999);
-      query.createdAt = { $gte: startDate, $lte: endDate };
+    // status filter
+    if (status) {
+      query.status = status;
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // orderNumber filter
+    if (orderNumber) {
+      const num = parseInt(orderNumber, 10);
+      if (!isNaN(num)) {
+        query.orderNumber = num;
+      }
+    }
 
-    const orders = await Order.find(query)
+    // single day filter
+    if (date) {
+      const startDate = new Date(date);
+      if (!isNaN(startDate.getTime())) {
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(startDate);
+        endDate.setHours(23, 59, 59, 999);
+        query.createdAt = { $gte: startDate, $lte: endDate };
+      }
+    }
+
+    // Build base query
+    let ordersQuery = Order.find(query)
       .sort({ createdAt: -1 })
       .populate("createdBy", "name")
-      .populate("items.product", "name");
+      .populate("items.product", "name")
+      .lean();
 
-    const total = await Order.countDocuments(query);
+    let pagination = null;
+    let total = null;
+
+    // ───────────────────────────────────────────────
+    // PAGINATION only when BOTH page AND limit exist
+    // ───────────────────────────────────────────────
+    if (page && limit) {
+      const pageNum  = parseInt(page, 10);
+      const limitNum = parseInt(limit, 10);
+
+      if (isNaN(pageNum) || pageNum < 1 || isNaN(limitNum) || limitNum < 1) {
+        return res.status(400).json({
+          success: false,
+          message: "page و limit يجب أن يكونا أرقام موجبة صحيحة",
+        });
+      }
+
+      // Optional safety (prevent someone requesting 100000 items)
+      if (limitNum > 200) {
+        return res.status(400).json({
+          success: false,
+          message: "الحد الأقصى المسموح به لـ limit هو 200",
+        });
+      }
+
+      const skip = (pageNum - 1) * limitNum;
+      ordersQuery = ordersQuery.skip(skip).limit(limitNum);
+
+      total = await Order.countDocuments(query);
+
+      pagination = {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        pages: Math.ceil(total / limitNum),
+        hasNext: skip + limitNum < total,
+        hasPrev: pageNum > 1,
+      };
+    } else {
+      // No page & limit → return ALL matching orders
+      total = await Order.countDocuments(query);
+
+      pagination = {
+        total,
+        all: true,
+        message: "جميع الطلبيات (بدون تقسيم صفحات)",
+      };
+    }
+
+    const orders = await ordersQuery;
 
     res.json({
       success: true,
       data: orders,
-      total,
-      pages: Math.ceil(total / limit),
-      currentPage: parseInt(page),
+      pagination,
     });
   } catch (err) {
     console.error("Error fetching orders:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "حدث خطأ أثناء جلب الطلبيات" });
+    res.status(500).json({
+      success: false,
+      message: "حدث خطأ أثناء جلب الطلبيات",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
   }
 };
 
