@@ -489,8 +489,10 @@ exports.getFullSummary = async (req, res) => {
 
     // ALL-TIME ORDERS
     const allOrders = await Order.find({
-      $or: [{ status: "تم الاستلام" }, { isPaid: true }],
-      status: { $ne: "ارجاع" },
+      status: {
+        $in: ["تم الاستلام"], // can easily add more statuses later
+        // $regex: /^تم الاستلام$/i, // alternative: case-insensitive exact match
+      },
     }).populate("items.product", "originalPrice");
 
     let allTimeOrders = 0;
@@ -604,13 +606,16 @@ exports.getTotalRevenue = async (req, res) => {
     let allTimeSales = 0;
 
     allSales.forEach((sale) => {
-      allTimeSales += sale.total - (sale.discountAmount || 0); // ← correct: already net of discount
+      const discount = sale.isExchanged ? 0 : sale.discountAmount || 0;
+      allTimeSales += sale.total - discount;
     });
 
     // 2. ALL-TIME ORDERS (unchanged – no discount field in orders)
     const allOrders = await Order.find({
-      $or: [{ status: "تم الاستلام" }, { isPaid: true }],
-      status: { $ne: "ارجاع" },
+      status: {
+        $in: ["تم الاستلام"], // can easily add more statuses later
+        // $regex: /^تم الاستلام$/i, // alternative: case-insensitive exact match
+      },
     });
 
     let allTimeOrders = 0;
@@ -639,16 +644,13 @@ exports.getTotalRevenue = async (req, res) => {
 
     // 5. Final total revenue
     const totalRevenue =
-      allTimeSales +
-      allTimeOrders -
-      allTimeNonFixedExpenses +
-      allTimeRevenueChanges;
+      allTimeSales - allTimeNonFixedExpenses + allTimeRevenueChanges;
 
     res.json({
       success: true,
       totalRevenue,
       breakdown: {
-        allTimeSales, // ← after discounts
+        allTimeSales, 
         allTimeOrders,
         allTimeNonFixedExpenses,
         allTimeRevenueChanges,
