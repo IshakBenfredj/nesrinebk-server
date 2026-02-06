@@ -771,26 +771,27 @@ exports.exchangeProducts = async (req, res) => {
 
 exports.getAllSales = async (req, res) => {
   try {
-    const { date, page = 1, limit = 10 } = req.query;
+    const { date } = req.query;
 
     let query = {};
     if (date) {
       const startDate = new Date(date);
       startDate.setHours(0, 0, 0, 0);
+      
       const endDate = new Date(date);
       endDate.setHours(23, 59, 59, 999);
+      
       query.createdAt = { $gte: startDate, $lte: endDate };
     }
 
     let sales = await Sale.find(query)
       .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit))
       .populate("cashier", "name")
       .populate("exchangeCashier", "name")
       .populate("items.product")
       .lean();
 
+    // Populate nested product info in exchanges
     sales = await Promise.all(
       sales.map(async (sale) => {
         if (sale.exchanges && sale.exchanges.length > 0) {
@@ -818,8 +819,9 @@ exports.getAllSales = async (req, res) => {
       data: {
         sales,
         total,
-        pages: Math.ceil(total / limit),
-        currentPage: parseInt(page),
+        // you can keep these or remove them — they're now just informational
+        // pages: 1,
+        // currentPage: 1,
       },
     });
   } catch (error) {

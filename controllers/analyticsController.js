@@ -528,19 +528,19 @@ exports.getFullSummary = async (req, res) => {
       allTimeSales - allTimeNonFixedExpenses + allTimeRevenueChanges;
     const netProfit = profitSales + profitOrders - totalExpenses;
     console.log("📊 Analytics Summary:");
-    console.log("Date:", date);
-    console.log("Type:", type);
-    console.log("Total Sales:", totalSales);
-    console.log("Profit from Sales:", profitSales);
-    console.log("Total Orders:", totalOrders);
-    console.log("Profit from Orders:", profitOrders);
-    console.log("Total Expenses:", totalExpenses);
-    console.log("Net Profit:", netProfit);
+    // console.log("Date:", date);
+    // console.log("Type:", type);
+    // console.log("Total Sales:", totalSales);
+    // console.log("Profit from Sales:", profitSales);
+    // console.log("Total Orders:", totalOrders);
+    // console.log("Profit from Orders:", profitOrders);
+    // console.log("Total Expenses:", totalExpenses);
+    // console.log("Net Profit:", netProfit);
     console.log("All-Time Sales:", allTimeSales);
     console.log("Revenue Changes:", allTimeRevenueChanges);
     console.log("All-Time Non Fixed Expenses:", allTimeNonFixedExpenses);
     console.log("Total Revenue:", totalRevenue);
-    console.log("Turnover:", turnover);
+    // console.log("Turnover:", turnover);
 
     // CAPITAL CALCULATION
     const products = await Product.find({});
