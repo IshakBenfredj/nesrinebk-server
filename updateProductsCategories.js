@@ -1,63 +1,93 @@
-// set-status-updated-at-to-yesterday.js
-const mongoose = require('mongoose');
-const Order = require('./models/Order'); // ← adjust path to your Order model
+// scripts/backfill-order-missing-fields.js
+// Run with: node scripts/backfill-order-missing-fields.js
 
+const mongoose = require('mongoose');
 require('dotenv').config();
 
-async function setStatusUpdatedAtToYesterday() {
+const Order = require('./models/Order'); // ← adjust path to your Order model
+
+async function backfillMissingFields() {
   try {
+    // 1. Connect
     await mongoose.connect(process.env.MONGODB_URI || process.env.MONGO_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
 
-    console.log('Connected to MongoDB');
+    console.log('→ Connected to MongoDB');
 
-    // Target date: 8 February 2026 at 00:00:00 (midnight)
-    const targetDate = new Date('2026-02-07T00:00:00.000Z');
+    // 2. Find documents missing source OR statusUpdatedAt
+    const filter = {
+      $or: [
+        { source: { $exists: false } },
+        { statusUpdatedAt: { $exists: false } },
+      ],
+    };
 
-    console.log(`Target date: ${targetDate.toISOString()} (${targetDate.toLocaleDateString('fr-FR')})`);
+    const orders = await Order.find(filter)
+      .select('_id orderNumber source statusUpdatedAt updatedAt createdAt')
+      .lean();
 
-    // Option A: Update ALL documents
-    // const filter = {};
+    console.log(`\nFound ${orders.length} orders missing source or statusUpdatedAt`);
 
-    // Option B: Update only documents that already have the field (safer)
-    const filter = { statusUpdatedAt: { $exists: true } };
+    if (orders.length === 0) {
+      console.log('Nothing to update. Exiting.');
+      return;
+    }
 
-    // Option C: Update only documents created before a certain date
-    // const filter = { createdAt: { $lt: new Date('2026-02-09') } };
+    // 3. Prepare bulk operations
+    const bulkOps = orders.map((order) => {
+      const updateFields = {};
 
-    const result = await Order.updateMany(
-      filter,
-      { $set: { statusUpdatedAt: targetDate } },
-      { timestamps: false } // ← prevents automatic update of updatedAt
+      if (!order.source) {
+        updateFields.source = 'أخرى';
+      }
+
+      if (!order.statusUpdatedAt) {
+        updateFields.statusUpdatedAt = new Date(); // today / now
+      }
+
+      return {
+        updateOne: {
+          filter: { _id: order._id },
+          update: { $set: updateFields },
+          timestamps: false, // ← very important: do NOT update updatedAt
+        },
+      };
+    });
+
+    // 4. Execute bulk write
+    const result = await Order.bulkWrite(bulkOps, { ordered: false });
+
+    console.log('\nBulk update summary:');
+    console.log(`  Matched:   ${result.matchedCount}`);
+    console.log(`  Modified:  ${result.modifiedCount}`);
+
+    // 5. Optional: show sample of updated documents
+    const sample = await Order.find({
+      $or: [{ source: 'أخرى' }, { statusUpdatedAt: { $exists: true } }],
+    })
+      .sort({ createdAt: -1 })
+
+    console.log('\nSample of updated orders:');
+    console.table(
+      sample.map((o) => ({
+        orderNumber: o.orderNumber,
+        source: o.source || '(was missing)',
+        statusUpdatedAt: o.statusUpdatedAt
+          ? o.statusUpdatedAt.toISOString()
+          : '(was missing)',
+        updatedAt: o.updatedAt.toISOString(),
+        createdAt: o.createdAt.toISOString(),
+      })),
     );
 
-    console.log('Update result:');
-    console.log(`- Matched documents:   ${result.matchedCount}`);
-    console.log(`- Modified documents:  ${result.modifiedCount}`);
-
-    // Optional: show a few examples after update
-    const sample = await Order.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('orderNumber status statusUpdatedAt updatedAt createdAt');
-
-    console.log('\nSample documents after update:');
-    console.table(sample.map(doc => ({
-      orderNumber: doc.orderNumber,
-      status: doc.status,
-      statusUpdatedAt: doc.statusUpdatedAt?.toISOString(),
-      updatedAt: doc.updatedAt?.toISOString(),
-      createdAt: doc.createdAt?.toISOString()
-    })));
-
   } catch (err) {
-    console.error('Error during update:', err);
+    console.error('Error during backfill:', err);
   } finally {
     await mongoose.connection.close();
-    console.log('Connection closed');
+    console.log('→ Connection closed');
   }
 }
 
-setStatusUpdatedAtToYesterday();
+backfillMissingFields();

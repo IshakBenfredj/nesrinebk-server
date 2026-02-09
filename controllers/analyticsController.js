@@ -404,7 +404,10 @@ exports.getFullSummary = async (req, res) => {
     // ================================================
     const orders = await Order.find({
       $expr: {
-        $eq: [{ $dateToString: { format, date: "$statusUpdatedAt" } }, shortDate],
+        $eq: [
+          { $dateToString: { format, date: "$statusUpdatedAt" } },
+          shortDate,
+        ],
       },
       status: "تم الاستلام",
       // If you still want to include paid but not delivered orders:
@@ -636,7 +639,7 @@ exports.getTotalRevenue = async (req, res) => {
       success: true,
       totalRevenue,
       breakdown: {
-        allTimeSales, 
+        allTimeSales,
         allTimeNonFixedExpenses,
         allTimeRevenueChanges,
       },
@@ -656,7 +659,7 @@ exports.getRevenueHistory = async (req, res) => {
 
     // Default: today
     if (!date) {
-      date = new Date().toISOString().split('T')[0];
+      date = new Date().toISOString().split("T")[0];
     }
 
     const startOfDay = new Date(date);
@@ -674,25 +677,25 @@ exports.getRevenueHistory = async (req, res) => {
     prevDayEnd.setMilliseconds(-1); // one millisecond before startOfDay
 
     const salesBefore = await Sale.find({
-      createdAt: { $lte: prevDayEnd }
+      createdAt: { $lte: prevDayEnd },
     }).lean();
 
     let revenueBefore = 0;
-    salesBefore.forEach(s => {
-      const discount = s.isExchanged ? 0 : (s.discountAmount || 0);
+    salesBefore.forEach((s) => {
+      const discount = s.isExchanged ? 0 : s.discountAmount || 0;
       revenueBefore += s.total - discount;
     });
 
     const expensesBefore = await Expense.find({
       createdAt: { $lte: prevDayEnd },
       isFixed: false,
-      admin: false
+      admin: false,
     }).lean();
 
     revenueBefore -= expensesBefore.reduce((sum, e) => sum + e.amount, 0);
 
     const revenueChangesBefore = await RevenueChanges.find({
-      createdAt: { $lte: prevDayEnd }
+      createdAt: { $lte: prevDayEnd },
     }).lean();
 
     revenueBefore += revenueChangesBefore.reduce((sum, r) => sum + r.amount, 0);
@@ -705,77 +708,92 @@ exports.getRevenueHistory = async (req, res) => {
     // ───────────────────────────────────────────────
 
     const salesUpToDate = await Sale.find({
-      createdAt: { $lte: endOfDay }
+      createdAt: { $lte: endOfDay },
     }).lean();
 
     let totalSales = 0;
-    salesUpToDate.forEach(s => {
-      const discount = s.isExchanged ? 0 : (s.discountAmount || 0);
+    salesUpToDate.forEach((s) => {
+      const discount = s.isExchanged ? 0 : s.discountAmount || 0;
       totalSales += s.total - discount;
     });
 
     const expensesUpToDate = await Expense.find({
       createdAt: { $lte: endOfDay },
       isFixed: false,
-      admin: false
+      admin: false,
     }).lean();
 
-    const totalExpenses = expensesUpToDate.reduce((sum, e) => sum + e.amount, 0);
+    const totalExpenses = expensesUpToDate.reduce(
+      (sum, e) => sum + e.amount,
+      0,
+    );
 
     const revenueChangesUpToDate = await RevenueChanges.find({
-      createdAt: { $lte: endOfDay }
+      createdAt: { $lte: endOfDay },
     }).lean();
 
-    const totalRevenueChanges = revenueChangesUpToDate.reduce((sum, r) => sum + r.amount, 0);
+    const totalRevenueChanges = revenueChangesUpToDate.reduce(
+      (sum, r) => sum + r.amount,
+      0,
+    );
 
-    const totalRevenueUpToDate = Math.round(totalSales - totalExpenses + totalRevenueChanges);
+    const totalRevenueUpToDate = Math.round(
+      totalSales - totalExpenses + totalRevenueChanges,
+    );
 
     // ───────────────────────────────────────────────
     // C. Only changes THAT HAPPENED on the selected day
     // ───────────────────────────────────────────────
 
     const daySales = await Sale.find({
-      createdAt: { $gte: startOfDay, $lte: endOfDay }
-    }).sort({ createdAt: 1 }).lean();
+      createdAt: { $gte: startOfDay, $lte: endOfDay },
+    })
+      .sort({ createdAt: 1 })
+      .lean();
 
     const dayExpenses = await Expense.find({
       createdAt: { $gte: startOfDay, $lte: endOfDay },
       isFixed: false,
-      admin: false
-    }).sort({ createdAt: 1 }).lean();
+      admin: false,
+    })
+      .sort({ createdAt: 1 })
+      .lean();
 
     const dayRevenueChanges = await RevenueChanges.find({
-      createdAt: { $gte: startOfDay, $lte: endOfDay }
-    }).sort({ createdAt: 1 }).lean();
+      createdAt: { $gte: startOfDay, $lte: endOfDay },
+    })
+      .sort({ createdAt: 1 })
+      .lean();
 
     // Build timeline
     const changes = [];
 
-    daySales.forEach(sale => {
-      const net = sale.total - (sale.isExchanged ? 0 : (sale.discountAmount || 0));
+    daySales.forEach((sale) => {
+      const net =
+        sale.total - (sale.isExchanged ? 0 : sale.discountAmount || 0);
       changes.push({
         type: "sale",
-        description: `بيع (${sale.items.length} منتج) - ${sale.barcode || 'غير محدد'}`,
+        description: `بيع (${sale.items.length} منتج) - ${sale.barcode || "غير محدد"}`,
         amount: net,
-        timestamp: sale.createdAt
+        timestamp: sale.createdAt,
       });
     });
 
-    dayExpenses.forEach(exp => {
+    dayExpenses.forEach((exp) => {
       changes.push({
         type: "expense",
         description: exp.description,
         amount: -exp.amount,
-        timestamp: exp.createdAt
+        timestamp: exp.createdAt,
       });
     });
 
-    dayRevenueChanges.forEach(rc => {
+    dayRevenueChanges.forEach((rc) => {
       changes.push({
         type: "revenue_change",
         description: rc.description,
         amount: rc.amount,
-        timestamp: rc.createdAt
+        timestamp: rc.createdAt,
       });
     });
 
@@ -784,27 +802,27 @@ exports.getRevenueHistory = async (req, res) => {
     // Running total starts from revenueBefore
     let running = revenueBefore;
 
-    const dailyHistory = changes.map(c => {
+    const dailyHistory = changes.map((c) => {
       running += c.amount;
       return {
         ...c,
         runningTotalAfter: Math.round(running),
-        time: c.timestamp.toLocaleTimeString('ar-DZ', {
-          hour: '2-digit',
-          minute: '2-digit'
-        })
+        time: c.timestamp.toLocaleTimeString("ar-DZ", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }),
       };
     });
 
     res.json({
       success: true,
       selectedDate: date,
-      revenueBeforeChanges: revenueBefore,          // ← new field
+      revenueBeforeChanges: revenueBefore, // ← new field
       totalRevenueUpToDate: totalRevenueUpToDate,
       dailyChangesCount: changes.length,
-      dailyHistory
+      dailyHistory,
     });
-
   } catch (err) {
     console.error("Error in getRevenueHistory:", err);
     res.status(500).json({
@@ -1327,17 +1345,16 @@ exports.getSalesChannels = async (req, res) => {
   }
 };
 
-
 exports.getOrdersSourcesData = async (req, res) => {
   try {
-    const { range = '30days' } = req.query;
+    const { range = "30days" } = req.query;
 
     let startDate = new Date();
-    if (range === '1year') {
+    if (range === "1year") {
       startDate.setFullYear(startDate.getFullYear() - 1);
-    } else if (range === '3months') {
+    } else if (range === "3months") {
       startDate.setMonth(startDate.getMonth() - 3);
-    } else if (range === '1day') {
+    } else if (range === "1day") {
       startDate.setDate(startDate.getDate() - 1);
     } else {
       // default 30 days
@@ -1374,7 +1391,7 @@ exports.getOrdersSourcesData = async (req, res) => {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
-}
+};
 
 // ⚠️ Inventory Alerts
 exports.getInventoryAlerts = async (req, res) => {
