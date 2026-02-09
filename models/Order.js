@@ -66,6 +66,12 @@ const OrderSchema = new mongoose.Schema(
     },
     notes: { type: String, default: "" },
     isPaid: { type: Boolean, default: false },
+    source: {
+      type: String,
+      enum: ["صفحة فيسبوك", "إنستغرام", "واتساب", "هاتف", "أخرى", "حساب فيسبوك"],
+      default: "أخرى",
+      required: true,
+    },
     status: {
       type: String,
       enum: ["غير مؤكدة", "مؤكدة", "قيد التوصيل", "تم الاستلام", "ارجاع"],
@@ -75,6 +81,10 @@ const OrderSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+    },
+    statusUpdatedAt: {
+      type: Date,
+      default: Date.now,
     },
   },
   { timestamps: true },

@@ -6,11 +6,12 @@ const {
   getRevenueTrend,
   getProductPerformance,
   getCustomerAnalysis,
-  getSalesChannels,
   getInventoryAlerts,
   getHourlySalesPattern,
   getExpenseAnalysis,
   getTotalRevenue,
+  getOrdersSourcesData,
+  getRevenueHistory,
 } = require("../controllers/analyticsController");
 const { protect } = require("../middleware/authMiddleware");
 
@@ -18,6 +19,7 @@ router.get("/summary", protect, getFullSummary);
 router.get("/top-products", protect, getTopProducts);
 
 router.get("/revenue-trend", protect, getRevenueTrend);
+router.get("/revenue-history", protect, getRevenueHistory);
 
 // Product performance analysis
 router.get("/product-performance", protect, getProductPerformance);
@@ -26,7 +28,7 @@ router.get("/product-performance", protect, getProductPerformance);
 router.get("/customer-analysis", protect, getCustomerAnalysis);
 
 // Sales channels analysis
-router.get("/sales-channels", protect, getSalesChannels);
+router.get("/order-sources", protect, getOrdersSourcesData);
 
 // Inventory alerts
 router.get("/inventory-alerts", protect, getInventoryAlerts);

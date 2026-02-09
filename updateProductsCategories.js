@@ -1,96 +1,63 @@
-// update-orders-to-new-schema.js
-require("dotenv").config();
-const mongoose = require("mongoose");
+// set-status-updated-at-to-yesterday.js
+const mongoose = require('mongoose');
+const Order = require('./models/Order'); // ← adjust path to your Order model
 
-// ────────────────────────────────────────────────
-// Import BOTH models (Order + Product)
-const Order = require("./models/Order");       // your Order model
-const Product = require("./models/Product");   // ← ADD THIS LINE (adjust path)
+require('dotenv').config();
 
-// Use your real connection string (or keep it in .env)
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://nesrinebka21:nesrinebka21@cluster0.2yyiwtw.mongodb.net/nesrinebka?retryWrites=true&w=majority&appName=Cluster0';
-
-if (!MONGODB_URI) {
-  console.error("MONGODB_URI is not defined");
-  process.exit(1);
-}
-
-async function updateOrders() {
+async function setStatusUpdatedAtToYesterday() {
   try {
-    // 1. Connect to MongoDB
-    await mongoose.connect(MONGODB_URI);
-    console.log("Connected to MongoDB");
-
-    // 2. Find orders that still have totalPrice (old field) and no total (new field)
-    const ordersToUpdate = await Order.find({
-      totalPrice: { $exists: true },
-      total: { $exists: false },
-    })
-      .populate({
-        path: "items.product",
-        select: "originalPrice price name", // only needed fields
-      })
-      .lean();
-
-    if (ordersToUpdate.length === 0) {
-      console.log("No orders need updating. All already migrated.");
-      return;
-    }
-
-    console.log(`Found ${ordersToUpdate.length} orders to update...`);
-
-    const bulkOps = ordersToUpdate.map((order) => {
-      let calculatedOriginalTotal = 0;
-      let calculatedProfit = 0;
-
-      // Calculate using populated product data (if available)
-      if (order.items && Array.isArray(order.items)) {
-        order.items.forEach((item) => {
-          const product = item.product;
-
-          // If product was populated → use real originalPrice
-          const itemOriginalPrice = product?.originalPrice || 0;
-          const itemPrice = product?.price || item.price || order.totalPrice / order.items.length;
-
-          calculatedOriginalTotal += itemOriginalPrice * item.quantity;
-          calculatedProfit += (itemPrice - itemOriginalPrice) * item.quantity;
-        });
-      } else {
-        // Very old fallback
-        calculatedOriginalTotal = order.totalPrice;
-        calculatedProfit = 0;
-      }
-
-      return {
-        updateOne: {
-          filter: { _id: order._id },
-          update: {
-            $set: {
-              total: order.totalPrice,
-              originalTotal: calculatedOriginalTotal,
-              profit: calculatedProfit,
-              discountAmount: 0,
-            },
-            $unset: { totalPrice: "" }, // remove old field
-          },
-        },
-      };
+    await mongoose.connect(process.env.MONGODB_URI || process.env.MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
     });
 
-    // 3. Run bulk update
-    const result = await Order.bulkWrite(bulkOps, { ordered: false });
+    console.log('Connected to MongoDB');
 
-    console.log("Update complete!");
-    console.log(`Matched: ${result.matchedCount}`);
-    console.log(`Modified: ${result.modifiedCount}`);
+    // Target date: 8 February 2026 at 00:00:00 (midnight)
+    const targetDate = new Date('2026-02-07T00:00:00.000Z');
+
+    console.log(`Target date: ${targetDate.toISOString()} (${targetDate.toLocaleDateString('fr-FR')})`);
+
+    // Option A: Update ALL documents
+    // const filter = {};
+
+    // Option B: Update only documents that already have the field (safer)
+    const filter = { statusUpdatedAt: { $exists: true } };
+
+    // Option C: Update only documents created before a certain date
+    // const filter = { createdAt: { $lt: new Date('2026-02-09') } };
+
+    const result = await Order.updateMany(
+      filter,
+      { $set: { statusUpdatedAt: targetDate } },
+      { timestamps: false } // ← prevents automatic update of updatedAt
+    );
+
+    console.log('Update result:');
+    console.log(`- Matched documents:   ${result.matchedCount}`);
+    console.log(`- Modified documents:  ${result.modifiedCount}`);
+
+    // Optional: show a few examples after update
+    const sample = await Order.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('orderNumber status statusUpdatedAt updatedAt createdAt');
+
+    console.log('\nSample documents after update:');
+    console.table(sample.map(doc => ({
+      orderNumber: doc.orderNumber,
+      status: doc.status,
+      statusUpdatedAt: doc.statusUpdatedAt?.toISOString(),
+      updatedAt: doc.updatedAt?.toISOString(),
+      createdAt: doc.createdAt?.toISOString()
+    })));
 
   } catch (err) {
-    console.error("Error during migration:", err);
+    console.error('Error during update:', err);
   } finally {
     await mongoose.connection.close();
-    console.log("MongoDB connection closed");
+    console.log('Connection closed');
   }
 }
 
-// Run
-updateOrders();
+setStatusUpdatedAtToYesterday();

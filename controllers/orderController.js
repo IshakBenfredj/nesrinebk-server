@@ -160,6 +160,7 @@ exports.createOrder = async (req, res) => {
       total,
       profit,
       discountAmount = 0,
+      source,
     } = req.body;
 
     if (!items || items.length === 0) {
@@ -290,6 +291,7 @@ exports.createOrder = async (req, res) => {
       notes,
       isPaid,
       status,
+      source,
       createdBy: req.user._id,
     });
 
@@ -299,7 +301,7 @@ exports.createOrder = async (req, res) => {
         await Product.updateOne(
           { _id: item.product, "colors.sizes.barcode": item.barcode },
           { $inc: { "colors.$[].sizes.$[s].quantity": -item.quantity } },
-          { arrayFilters: [{ "s.barcode": item.barcode }] }
+          { arrayFilters: [{ "s.barcode": item.barcode }] },
         );
       }
     }
@@ -328,6 +330,7 @@ exports.updateOrderStatus = async (req, res) => {
 
     const oldStatus = order.status;
     order.status = status;
+    order.statusUpdatedAt = new Date();
     await order.save();
 
     const shouldDecreaseNew = status !== "غير مؤكدة" && status !== "ارجاع";
@@ -385,24 +388,33 @@ exports.updateOrder = async (req, res) => {
       total,
       profit,
       discountAmount = 0,
+      source,
     } = req.body;
 
     const order = await Order.findById(id);
     if (!order) {
-      return res.status(404).json({ success: false, message: "الطلبية غير موجودة" });
+      return res
+        .status(404)
+        .json({ success: false, message: "الطلبية غير موجودة" });
     }
 
     // Validate required fields
     if (!items || items.length === 0) {
-      return res.status(400).json({ success: false, message: "المنتجات مطلوبة" });
+      return res
+        .status(400)
+        .json({ success: false, message: "المنتجات مطلوبة" });
     }
 
     if (!deliveryType || !["مكتب", "منزل"].includes(deliveryType)) {
-      return res.status(400).json({ success: false, message: "نوع التوصيل غير صالح" });
+      return res
+        .status(400)
+        .json({ success: false, message: "نوع التوصيل غير صالح" });
     }
 
     if (deliveryType === "منزل" && (!address || address.trim() === "")) {
-      return res.status(400).json({ success: false, message: "العنوان مطلوب للتوصيل للمنزل" });
+      return res
+        .status(400)
+        .json({ success: false, message: "العنوان مطلوب للتوصيل للمنزل" });
     }
 
     // Financial validation
@@ -416,11 +428,14 @@ exports.updateOrder = async (req, res) => {
       discountAmount < 0 ||
       discountAmount > originalTotal
     ) {
-      return res.status(400).json({ success: false, message: "البيانات المالية غير صالحة" });
+      return res
+        .status(400)
+        .json({ success: false, message: "البيانات المالية غير صالحة" });
     }
 
     // Stock rollback (add back old quantities if stock was decreased)
-    const oldShouldDecrease = order.status !== "غير مؤكدة" && order.status !== "ارجاع";
+    const oldShouldDecrease =
+      order.status !== "غير مؤكدة" && order.status !== "ارجاع";
     const newShouldDecrease = status !== "غير مؤكدة" && status !== "ارجاع";
 
     if (oldShouldDecrease) {
@@ -429,7 +444,7 @@ exports.updateOrder = async (req, res) => {
         await Product.updateOne(
           { _id: item.product, "colors.sizes.barcode": item.barcode },
           { $inc: { "colors.$[].sizes.$[s].quantity": item.quantity } },
-          { arrayFilters: [{ "s.barcode": item.barcode }] }
+          { arrayFilters: [{ "s.barcode": item.barcode }] },
         );
       }
     }
@@ -437,13 +452,19 @@ exports.updateOrder = async (req, res) => {
     // Validate new items stock
     for (const item of items) {
       const product = await Product.findById(item.product);
-      if (!product) return res.status(404).json({ success: false, message: "منتج غير موجود" });
+      if (!product)
+        return res
+          .status(404)
+          .json({ success: false, message: "منتج غير موجود" });
 
       const foundSize = product.colors
-        .flatMap(c => c.sizes)
-        .find(s => s.barcode === item.barcode);
+        .flatMap((c) => c.sizes)
+        .find((s) => s.barcode === item.barcode);
 
-      if (!foundSize) return res.status(400).json({ success: false, message: "باركود غير موجود" });
+      if (!foundSize)
+        return res
+          .status(400)
+          .json({ success: false, message: "باركود غير موجود" });
 
       // Check available stock (considering current reserved orders except this one)
       const reserved = await Order.aggregate([
@@ -456,7 +477,12 @@ exports.updateOrder = async (req, res) => {
         },
         { $unwind: "$items" },
         { $match: { "items.barcode": item.barcode } },
-        { $group: { _id: "$items.barcode", reservedQty: { $sum: "$items.quantity" } } },
+        {
+          $group: {
+            _id: "$items.barcode",
+            reservedQty: { $sum: "$items.quantity" },
+          },
+        },
       ]);
 
       const reservedQty = reserved[0]?.reservedQty || 0;
@@ -476,7 +502,7 @@ exports.updateOrder = async (req, res) => {
         await Product.updateOne(
           { _id: item.product, "colors.sizes.barcode": item.barcode },
           { $inc: { "colors.$[].sizes.$[s].quantity": -item.quantity } },
-          { arrayFilters: [{ "s.barcode": item.barcode }] }
+          { arrayFilters: [{ "s.barcode": item.barcode }] },
         );
       }
     }
@@ -497,9 +523,10 @@ exports.updateOrder = async (req, res) => {
         discountAmount,
         notes,
         isPaid,
+        source,
         status,
       },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     res.json({
@@ -581,7 +608,7 @@ exports.getOrders = async (req, res) => {
     // PAGINATION only when BOTH page AND limit exist
     // ───────────────────────────────────────────────
     if (page && limit) {
-      const pageNum  = parseInt(page, 10);
+      const pageNum = parseInt(page, 10);
       const limitNum = parseInt(limit, 10);
 
       if (isNaN(pageNum) || pageNum < 1 || isNaN(limitNum) || limitNum < 1) {
@@ -644,7 +671,9 @@ exports.getOrderById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const order = await Order.findById(id).populate("createdBy", "name").populate("items.product", "name originalPrice");
+    const order = await Order.findById(id)
+      .populate("createdBy", "name")
+      .populate("items.product", "name originalPrice");
 
     if (!order) {
       return res
