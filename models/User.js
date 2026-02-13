@@ -21,8 +21,12 @@ const userSchema = new mongoose.Schema(
       enum: ["admin", "social_media", "worker"],
       default: "worker",
     },
+    bonusPercentage: {
+      type: Number,
+      default: 0,
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 userSchema.pre("save", async function (next) {

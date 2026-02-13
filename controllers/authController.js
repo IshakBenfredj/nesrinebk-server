@@ -132,7 +132,7 @@ exports.getUsers = async (req, res) => {
 // PUT /api/auth/users/:id
 exports.editUser = async (req, res) => {
   const { id } = req.params;
-  const { phone, name, role, password } = req.body;
+  const { phone, name, role, password, bonusPercentage } = req.body;
 
   // Input validation
   if (!phone || !name || !role) {
@@ -152,7 +152,12 @@ exports.editUser = async (req, res) => {
   }
 
   try {
-    const updateData = { phone, name, role };
+    const updateData = {
+      phone,
+      name,
+      role,
+      bonusPercentage,
+    };
 
     // Only hash and add password if it is provided
     if (password && password.trim() !== "") {

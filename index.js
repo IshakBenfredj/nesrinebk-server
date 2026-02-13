@@ -14,6 +14,7 @@ const analytics = require("./routes/analyticsRoutes");
 const revenuesChanges = require("./routes/revenuesChangesRoutes");
 const stockHistory = require("./routes/stockHistoryRoutes");
 const todo = require("./routes/todoRoutes");
+const bonusRoutes = require("./routes/bonusRoutes");
 const job = require("./utils/cron");
 const useragent = require('express-useragent');
 
@@ -74,6 +75,7 @@ app.use("/api/analytics", analytics);
 app.use("/api/revenues-changes", revenuesChanges);
 app.use("/api/stock-history", stockHistory);
 app.use("/api/todos", todo);
+app.use("/api/bonus", bonusRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

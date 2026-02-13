@@ -3,6 +3,7 @@ const Product = require("../models/Product");
 const Order = require("../models/Order");
 const DailyProfit = require("../models/DailyProfit");
 const { updateProductStock } = require("../utils/productUtils");
+const BonusConfig = require("../models/BonusConfig");
 
 const generateUniqueBarcode = async () => {
   let barcode;
@@ -17,10 +18,16 @@ const generateUniqueBarcode = async () => {
   return barcode;
 };
 
-
 exports.createSale = async (req, res) => {
   try {
-    const { items, cashier, originalTotal, total, profit, discountAmount = 0 } = req.body;
+    const {
+      items,
+      cashier,
+      originalTotal,
+      total,
+      profit,
+      discountAmount = 0,
+    } = req.body;
 
     // التحقق الأساسي
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -67,7 +74,6 @@ exports.createSale = async (req, res) => {
       });
     }
 
-
     const saleItems = [];
 
     // التحقق من كل عنصر + تحديث المخزون
@@ -81,9 +87,11 @@ exports.createSale = async (req, res) => {
       }
 
       const color = product.colors.find((c) =>
-        c.sizes.some((s) => s.barcode === item.barcode)
+        c.sizes.some((s) => s.barcode === item.barcode),
       );
-      const size = color ? color.sizes.find((s) => s.barcode === item.barcode) : null;
+      const size = color
+        ? color.sizes.find((s) => s.barcode === item.barcode)
+        : null;
 
       if (!color || !size) {
         return res.status(400).json({
@@ -110,7 +118,8 @@ exports.createSale = async (req, res) => {
         },
       ]);
 
-      const reservedQty = reservedOrders.length > 0 ? reservedOrders[0].reservedQty : 0;
+      const reservedQty =
+        reservedOrders.length > 0 ? reservedOrders[0].reservedQty : 0;
       const availableQty = size.quantity - reservedQty;
 
       if (availableQty <= 0) {
@@ -138,24 +147,24 @@ exports.createSale = async (req, res) => {
       });
     }
 
-    // Generate unique barcode
     const uniqueBarcode = await generateUniqueBarcode();
+
 
     const sale = new Sale({
       barcode: uniqueBarcode,
       items: saleItems,
-      total,                // الإجمالي النهائي بعد التخفيض (من الفرونت)
-      originalTotal,        // مجموع سعر البيع قبل التخفيض
-      discountAmount,       // مبلغ التخفيض
-      profit,               // الربح بدون خصم التخفيض (من الفرونت)
+      total, 
+      originalTotal, 
+      discountAmount,
+      profit, 
       cashier,
     });
 
     // Update stock
     await Promise.all(
       saleItems.map((item) =>
-        updateProductStock(item.product, item.barcode, -item.quantity, true)
-      )
+        updateProductStock(item.product, item.barcode, -item.quantity, true),
+      ),
     );
 
     await sale.save();
@@ -233,7 +242,7 @@ exports.exchangeProducts = async (req, res) => {
       }
 
       const originalItem = sale.items.find(
-        (item) => item.barcode === originalBarcode
+        (item) => item.barcode === originalBarcode,
       );
       if (!originalItem) {
         return res.status(404).json({
@@ -302,14 +311,14 @@ exports.exchangeProducts = async (req, res) => {
           originalItem.product,
           originalItem.barcode,
           originalItem.quantity,
-          false // return to stock
+          false, // return to stock
         ),
-        updateProductStock(newProduct._id, newBarcode, -newQuantity, false) // remove from stock
+        updateProductStock(newProduct._id, newBarcode, -newQuantity, false), // remove from stock
       );
 
       // Update the sale items (replace old with new)
       sale.items = sale.items.map((item) =>
-        item.barcode === originalBarcode ? exchangedItem : item
+        item.barcode === originalBarcode ? exchangedItem : item,
       );
 
       exchangeRecords.push({
@@ -330,11 +339,11 @@ exports.exchangeProducts = async (req, res) => {
     // Recalculate current totals after exchange
     sale.total = sale.items.reduce(
       (sum, item) => sum + item.quantity * item.price,
-      0
+      0,
     );
     sale.originalTotal = sale.items.reduce(
       (sum, item) => sum + item.quantity * item.originalPrice,
-      0
+      0,
     );
     sale.profit = sale.total - sale.originalTotal;
 
@@ -632,7 +641,7 @@ exports.exchangeProducts = async (req, res) => {
       }
 
       const originalItem = sale.items.find(
-        (item) => item.barcode === originalBarcode
+        (item) => item.barcode === originalBarcode,
       );
       if (!originalItem) {
         return res.status(404).json({
@@ -701,14 +710,14 @@ exports.exchangeProducts = async (req, res) => {
           originalItem.product,
           originalItem.barcode,
           originalItem.quantity,
-          false
+          false,
         ),
 
-        updateProductStock(newProduct._id, newBarcode, -newQuantity, false)
+        updateProductStock(newProduct._id, newBarcode, -newQuantity, false),
       );
 
       sale.items = sale.items.map((item) =>
-        item.barcode === originalBarcode ? exchangedItem : item
+        item.barcode === originalBarcode ? exchangedItem : item,
       );
 
       exchangeRecords.push({
@@ -728,11 +737,11 @@ exports.exchangeProducts = async (req, res) => {
 
     sale.total = sale.items.reduce(
       (sum, item) => sum + item.quantity * item.price,
-      0
+      0,
     );
     sale.originalTotal = sale.items.reduce(
       (sum, item) => sum + item.quantity * item.originalPrice,
-      0
+      0,
     );
     sale.profit = sale.total - sale.originalTotal;
     sale.isExchanged = true;
@@ -777,10 +786,10 @@ exports.getAllSales = async (req, res) => {
     if (date) {
       const startDate = new Date(date);
       startDate.setHours(0, 0, 0, 0);
-      
+
       const endDate = new Date(date);
       endDate.setHours(23, 59, 59, 999);
-      
+
       query.createdAt = { $gte: startDate, $lte: endDate };
     }
 
@@ -798,18 +807,18 @@ exports.getAllSales = async (req, res) => {
           for (const exchange of sale.exchanges) {
             if (exchange.originalItem?.product) {
               exchange.originalItem.product = await Product.findById(
-                exchange.originalItem.product
+                exchange.originalItem.product,
               ).select("name price");
             }
             if (exchange.exchangedWith?.product) {
               exchange.exchangedWith.product = await Product.findById(
-                exchange.exchangedWith.product
+                exchange.exchangedWith.product,
               ).select("name price");
             }
           }
         }
         return sale;
-      })
+      }),
     );
 
     const total = await Sale.countDocuments(query);
@@ -850,7 +859,7 @@ const updateDailyProfit = async (date, totalSales, totalOriginal, profit) => {
           finalProfit: profit,
         },
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true },
     );
   } catch (error) {
     console.error("Error updating daily profit:", error);

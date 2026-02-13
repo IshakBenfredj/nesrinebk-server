@@ -92,7 +92,8 @@ const SaleSchema = new mongoose.Schema(
     },
     profitBeforeExchange: {
       type: Number,
-      min: 0,},
+      min: 0,
+    },
     cashier: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -118,6 +119,11 @@ const SaleSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+    },
+    bonusPercentageApplied: {
+      type: Number,
+      min: 0,
+      default: 0,
     },
   },
   {
