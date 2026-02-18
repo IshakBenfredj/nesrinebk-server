@@ -28,5 +28,11 @@ router.get(
   authorizeRoles("worker", "admin"),
   saleController.getSaleById
 );
+router.patch(
+  "/complete-payment/:id",
+  protect,
+  authorizeRoles("worker", "admin"),
+  saleController.completeSalePayment
+);
 
 module.exports = router;

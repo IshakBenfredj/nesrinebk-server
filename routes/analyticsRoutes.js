@@ -20,7 +20,6 @@ router.get("/top-products", protect, getTopProducts);
 
 router.get("/revenue-trend", protect, getRevenueTrend);
 router.get("/revenue-history", protect, getRevenueHistory);
-
 // Product performance analysis
 router.get("/product-performance", protect, getProductPerformance);
 

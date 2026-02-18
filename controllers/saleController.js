@@ -27,6 +27,8 @@ exports.createSale = async (req, res) => {
       total,
       profit,
       discountAmount = 0,
+      isPrePaid,
+      prepaidAmount,
     } = req.body;
 
     // التحقق الأساسي
@@ -149,15 +151,16 @@ exports.createSale = async (req, res) => {
 
     const uniqueBarcode = await generateUniqueBarcode();
 
-
     const sale = new Sale({
       barcode: uniqueBarcode,
       items: saleItems,
-      total, 
-      originalTotal, 
+      total,
+      originalTotal,
       discountAmount,
-      profit, 
+      profit,
       cashier,
+      isPrePaid,
+      prepaidAmount,
     });
 
     // Update stock
@@ -351,6 +354,7 @@ exports.exchangeProducts = async (req, res) => {
     sale.isExchanged = true;
     sale.exchanges.push(...exchangeRecords);
     sale.exchangeCashier = cashier;
+    sale.exchangedAt = new Date()
 
     await sale.save();
 
@@ -363,6 +367,71 @@ exports.exchangeProducts = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "حدث خطأ أثناء عملية الاستبدال",
+    });
+  }
+};
+
+/**
+ * @route   POST /api/sales/:id/complete-payment
+ * @desc    Mark a prepaid/reserved sale as fully paid by setting finalPaymentAt
+ * @access  Private (cashier / admin)
+ */
+exports.completeSalePayment = async (req, res) => {
+  try {
+    const { id } = req.params; // sale _id
+    const cashierId = req.user._id; // assuming JWT / auth middleware sets req.user
+
+    const sale = await Sale.findById(id);
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: "الفاتورة غير موجودة",
+      });
+    }
+
+
+    if (!sale.isPrePaid) {
+      return res.status(400).json({
+        success: false,
+        message: "هذه الفاتورة ليست من نوع الدفع المسبق",
+      });
+    }
+
+    if (sale.finalPaymentAt) {
+      return res.status(400).json({
+        success: false,
+        message: "تم إتمام الدفع لهذه الفاتورة مسبقًا",
+      });
+    }
+
+    sale.finalPaymentAt = new Date();
+
+    sale.finalCashier = cashierId;
+
+    await sale.save();
+
+    // ── Response ───────────────────────────────────────────────────
+
+    return res.status(200).json({
+      success: true,
+      message: "تم إتمام الدفع بنجاح",
+      data: {
+        saleId: sale._id,
+        barcode: sale.barcode,
+        total: sale.total,
+        prepaidAmount: sale.prepaidAmount,
+        remainingWas: sale.total - sale.prepaidAmount,
+        completedAt: sale.finalPaymentAt.toISOString(),
+        // status can be computed on frontend or via virtual if you add it
+      },
+    });
+  } catch (error) {
+    console.error("completeSalePayment error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "حدث خطأ أثناء إتمام عملية الدفع",
+      error: error.message,
     });
   }
 };

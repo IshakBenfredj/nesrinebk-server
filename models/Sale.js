@@ -68,12 +68,12 @@ const SaleSchema = new mongoose.Schema(
       type: [SaleItemSchema],
       required: true,
     },
-    total: {
+    originalTotal: {
       type: Number,
       required: true,
       min: 0,
     },
-    originalTotal: {
+    total: {
       type: Number,
       required: true,
       min: 0,
@@ -86,11 +86,16 @@ const SaleSchema = new mongoose.Schema(
       type: Number,
       min: 0,
     },
-    originalTotalBeforeExchange: {
+    profitBeforeExchange: {
       type: Number,
       min: 0,
     },
-    profitBeforeExchange: {
+    prepaidAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    originalTotalBeforeExchange: {
       type: Number,
       min: 0,
     },
@@ -100,6 +105,10 @@ const SaleSchema = new mongoose.Schema(
       required: true,
     },
     exchangeCashier: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    finalCashier: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
@@ -125,6 +134,16 @@ const SaleSchema = new mongoose.Schema(
       min: 0,
       default: 0,
     },
+    isPrePaid: {
+      type: Boolean,
+      default: false,
+    },
+    finalPaymentAt: {
+      type: Date,
+    },
+    exchangedAt: {
+      type: Date,
+    },
   },
   {
     timestamps: true,
@@ -137,5 +156,21 @@ const SaleSchema = new mongoose.Schema(
 SaleSchema.index({ createdAt: 1 });
 SaleSchema.index({ cashier: 1 });
 SaleSchema.index({ "items.product": 1 });
+
+SaleSchema.virtual("remainingAmount").get(function () {
+  return this.total - (this.prepaidAmount || 0);
+});
+
+SaleSchema.virtual("isFullyPaid").get(function () {
+  if (!this.isPrePaid) return true;
+  return !!this.finalPaymentAt || this.prepaidAmount >= this.total;
+});
+
+SaleSchema.virtual("paymentStatus").get(function () {
+  if (!this.isPrePaid) return "completed";
+  if (this.prepaidAmount >= this.total) return "completed_at_creation";
+  if (this.finalPaymentAt) return "completed_later";
+  return "prepaid_pending";
+});
 
 module.exports = mongoose.model("Sale", SaleSchema);
