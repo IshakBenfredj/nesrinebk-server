@@ -210,11 +210,11 @@ exports.exchangeProducts = async (req, res) => {
     const saleTime = new Date(sale.createdAt);
     const hoursDiff = (now - saleTime) / (1000 * 60 * 60);
 
-    if (hoursDiff > 50) {
+    if (hoursDiff > 24) {
       return res.json({
         success: false,
         expired: true,
-        message: "انتهت فترة الـ 50 ساعة المسموح بها للاستبدال",
+        message: "انتهت فترة الـ 24 ساعة المسموح بها للاستبدال",
       });
     }
 
@@ -233,6 +233,7 @@ exports.exchangeProducts = async (req, res) => {
     let totalNewAmount = 0;
     let totalOriginalCost = 0;
     let totalNewCost = 0;
+    let totalNewProfit = 0;
 
     for (const exchange of exchanges) {
       const { originalBarcode, newBarcode, newQuantity } = exchange;
@@ -308,13 +309,15 @@ exports.exchangeProducts = async (req, res) => {
 
       const originalCost = originalItem.quantity * originalItem.originalPrice;
       const newCost = newQuantity * newProduct.originalPrice;
+      const newProfit =
+        newQuantity * (newProduct.price - newProduct.originalPrice);
 
       stockUpdates.push(
         updateProductStock(
           originalItem.product,
           originalItem.barcode,
           originalItem.quantity,
-          false, // return to stock
+          false,
         ),
         updateProductStock(newProduct._id, newBarcode, -newQuantity, false), // remove from stock
       );
@@ -335,9 +338,14 @@ exports.exchangeProducts = async (req, res) => {
       totalNewAmount += newAmount;
       totalOriginalCost += originalCost;
       totalNewCost += newCost;
+      totalNewProfit += newProfit;
     }
 
     await Promise.all(stockUpdates);
+
+    sale.totalBeforeExchange = sale.total;
+    sale.profitBeforeExchange = sale.profit;
+    sale.originalTotalBeforeExchange = sale.originalTotal
 
     // Recalculate current totals after exchange
     sale.total = sale.items.reduce(
@@ -354,7 +362,7 @@ exports.exchangeProducts = async (req, res) => {
     sale.isExchanged = true;
     sale.exchanges.push(...exchangeRecords);
     sale.exchangeCashier = cashier;
-    sale.exchangedAt = new Date()
+    sale.exchangedAt = new Date();
 
     await sale.save();
 
@@ -388,7 +396,6 @@ exports.completeSalePayment = async (req, res) => {
         message: "الفاتورة غير موجودة",
       });
     }
-
 
     if (!sale.isPrePaid) {
       return res.status(400).json({

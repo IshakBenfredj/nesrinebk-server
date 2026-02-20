@@ -160,6 +160,7 @@ exports.createOrder = async (req, res) => {
       total,
       profit,
       discountAmount = 0,
+      accountName,
       source,
     } = req.body;
 
@@ -188,8 +189,7 @@ exports.createOrder = async (req, res) => {
       typeof total !== "number" ||
       typeof profit !== "number" ||
       originalTotal < 0 ||
-      total < 0 ||
-      profit < 0
+      total < 0
     ) {
       return res.status(400).json({
         success: false,
@@ -293,6 +293,7 @@ exports.createOrder = async (req, res) => {
       status,
       source,
       createdBy: req.user._id,
+      accountName,
     });
 
     // Update stock in DB if needed
@@ -389,6 +390,7 @@ exports.updateOrder = async (req, res) => {
       profit,
       discountAmount = 0,
       source,
+      accountName
     } = req.body;
 
     const order = await Order.findById(id);
@@ -525,6 +527,7 @@ exports.updateOrder = async (req, res) => {
         isPaid,
         source,
         status,
+        accountName
       },
       { new: true, runValidators: true },
     );

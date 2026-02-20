@@ -66,9 +66,17 @@ const OrderSchema = new mongoose.Schema(
     },
     notes: { type: String, default: "" },
     isPaid: { type: Boolean, default: false },
+    accountName: { type: String },
     source: {
       type: String,
-      enum: ["صفحة فيسبوك", "إنستغرام", "واتساب", "هاتف", "أخرى", "حساب فيسبوك"],
+      enum: [
+        "صفحة فيسبوك",
+        "إنستغرام",
+        "واتساب",
+        "هاتف",
+        "أخرى",
+        "حساب فيسبوك",
+      ],
       default: "أخرى",
       required: true,
     },
