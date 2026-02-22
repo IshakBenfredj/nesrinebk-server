@@ -11,6 +11,9 @@ router.get(
   bonusCtrl.getBonusStatus,
 );
 router.get("/worker/:workerId", protect, bonusCtrl.getWorkerBonus);
+router.get("/periods/:periodId/adjustments", protect, authorizeRoles("admin"), bonusCtrl.getAdjustmentsForPeriod);
 router.post("/pay/:workerId", protect, bonusCtrl.payWorkerBonus);
+router.post("/:periodId/adjustments", protect, authorizeRoles("admin"), bonusCtrl.createAdjustment);
+router.delete("/adjustments/:adjustmentId", protect, authorizeRoles("admin"), bonusCtrl.deleteAdjustment);
 
 module.exports = router;
