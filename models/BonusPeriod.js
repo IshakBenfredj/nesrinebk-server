@@ -97,41 +97,41 @@ BonusPeriodSchema.statics.calculateForPeriod = async function (periodDocOrId) {
 
   // ── Work days detection ──────────────────────────
   // A "work day" = any day the worker created at least one qualifying expense
-  const workDaysRaw = await Expense.distinct("createdAt", {
-    user: period.user,
-    admin: false,
-    isFixed: false,
-    createdAt: { $gte: period.startDate, $lte: end },
-  });
+  // const workDaysRaw = await Expense.distinct("createdAt", {
+  //   user: period.user,
+  //   admin: false,
+  //   isFixed: false,
+  //   createdAt: { $gte: period.startDate, $lte: end },
+  // });
 
   // Normalize to start-of-day timestamps (no mutation)
-  const workDayTimestamps = workDaysRaw.map((d) => {
-    const day = new Date(d);
-    day.setHours(0, 0, 0, 0);
-    return day.getTime();
-  });
+  // const workDayTimestamps = workDaysRaw.map((d) => {
+  //   const day = new Date(d);
+  //   day.setHours(0, 0, 0, 0);
+  //   return day.getTime();
+  // });
 
   // ── Expenses only on work days ───────────────────
-  const expenses = await Expense.find({
-    admin: false,
-    isFixed: false,
-    createdAt: { $gte: period.startDate, $lte: end },
-  })
-    .select("amount createdAt")
-    .lean();
+  // const expenses = await Expense.find({
+  //   admin: false,
+  //   isFixed: false,
+  //   createdAt: { $gte: period.startDate, $lte: end },
+  // })
+  //   .select("amount createdAt")
+  //   .lean();
 
-  const expensesOnWorkDays = expenses.filter((e) => {
-    const expDay = new Date(e.createdAt);
-    expDay.setHours(0, 0, 0, 0);
-    return workDayTimestamps.includes(expDay.getTime());
-  });
+  // const expensesOnWorkDays = expenses.filter((e) => {
+  //   const expDay = new Date(e.createdAt);
+  //   expDay.setHours(0, 0, 0, 0);
+  //   return workDayTimestamps.includes(expDay.getTime());
+  // });
 
-  const totalExpenses = expensesOnWorkDays.reduce(
-    (sum, e) => sum + e.amount,
-    0,
-  );
+  // const totalExpenses = expensesOnWorkDays.reduce(
+  //   (sum, e) => sum + e.amount,
+  //   0,
+  // );
 
-  const netBonus = Math.max(0, salesBonus - totalExpenses * percentage);
+  const netBonus = salesBonus;
 
   const adjustments = await BonusAdjustment.find({ period: period._id })
     .select("amount")
@@ -142,16 +142,15 @@ BonusPeriodSchema.statics.calculateForPeriod = async function (periodDocOrId) {
     0,
   );
 
-  const finalNetBonus = Math.max(0, netBonus + totalAdjustments);
+  const finalNetBonus = Math.max(0, netBonus + (totalAdjustments || 0));
 
   return {
-    netBonus : finalNetBonus,
+    netBonus: finalNetBonus ? Math.trunc(finalNetBonus) : 0,
     details: {
       salesCount: sales.length,
       salesBonus: salesBonus,
-      expensesCount: expensesOnWorkDays.length,
-      totalExpenses: totalExpenses,
-      workDaysCount: workDayTimestamps.length,
+      // expensesCount: expensesOnWorkDays.length,
+      // workDaysCount: workDayTimestamps.length,
       percentageUsed: worker.bonusPercentage,
     },
   };
