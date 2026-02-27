@@ -239,62 +239,115 @@ async function computeOrdersForPeriod(dateMatches, filterQuery) {
  *  For "range" mode we need to know how many days / months are covered.
  */
 function computeExpenses(expenses, type, singleDate, from, to) {
-  let totalExpenses = 0;
-  let adminExpenses = 0;
+  let totalExpenses    = 0;
+  let adminExpenses    = 0;
   let nonFixedExpenses = 0;
 
-  // Helper: how many unique calendar-days in the period
-  const daysInRange = () => {
-    const msPerDay = 86400000;
-    return Math.round((new Date(to) - new Date(from)) / msPerDay) + 1;
-  };
-
-  // Helper: how many unique calendar-months in the period
-  const monthsInRange = () => {
-    const f = new Date(from);
-    const t = new Date(to);
-    return (
-      (t.getFullYear() - f.getFullYear()) * 12 +
-      (t.getMonth() - f.getMonth()) +
-      1
-    );
-  };
-
-  const dateMatches = makeDateMatcher(type, singleDate, from, to);
-
   expenses.forEach((exp) => {
-    const createdAt = new Date(exp.createdAt);
+    const createdAt    = new Date(exp.createdAt);
+    const createdDay   = createdAt.getDate();
+    const createdStart = new Date(createdAt);
+    createdStart.setHours(0, 0, 0, 0);
 
-    /* ── admin ── */
+    /* ══════════════════════════════════════════════════════════════
+       FIXED DAILY
+       يُحسب في كل يوم >= يوم الإنشاء
+       NOTE: يأتي قبل فحص admin لأن admin+isFixed يجب أن يسلك
+             مسار fixed وليس مسار admin العادي
+       ══════════════════════════════════════════════════════════════ */
+    if (exp.isFixed && exp.recurrence === "daily") {
+      if (type === "day") {
+        const selectedDay = new Date(singleDate);
+        selectedDay.setHours(0, 0, 0, 0);
+        if (selectedDay >= createdStart) {
+          totalExpenses += exp.amount;
+        }
+      } else {
+        const rangeStart = new Date(from); rangeStart.setHours(0,  0,  0,   0);
+        const rangeEnd   = new Date(to);   rangeEnd.setHours(23, 59, 59, 999);
+        const effectiveStart = createdStart > rangeStart ? createdStart : rangeStart;
+        if (effectiveStart > rangeEnd) return;
+        const msPerDay = 86400000;
+        const days = Math.round((rangeEnd - effectiveStart) / msPerDay) + 1;
+        totalExpenses += exp.amount * days;
+      }
+      return; // ← handled, skip other branches
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       FIXED MONTHLY
+       يُحسب في نفس رقم اليوم من كل شهر >= شهر الإنشاء
+       ══════════════════════════════════════════════════════════════ */
+    if (exp.isFixed && exp.recurrence === "monthly") {
+      if (type === "day") {
+        const selectedDate = new Date(singleDate);
+        selectedDate.setHours(12, 0, 0, 0);
+        if (
+          selectedDate.getDate() === createdDay &&
+          selectedDate >= createdStart
+        ) {
+          totalExpenses += exp.amount;
+        }
+      } else {
+        const rangeStart = new Date(from); rangeStart.setHours(0,  0,  0,   0);
+        const rangeEnd   = new Date(to);   rangeEnd.setHours(23, 59, 59, 999);
+        const effectiveStart = createdStart > rangeStart ? createdStart : rangeStart;
+        if (effectiveStart > rangeEnd) return;
+
+        let count = 0;
+        const cursor = new Date(effectiveStart);
+        cursor.setDate(1); // أول الشهر الفعّال
+
+        while (cursor <= rangeEnd) {
+          const dueDate = new Date(cursor.getFullYear(), cursor.getMonth(), createdDay);
+          dueDate.setHours(12, 0, 0, 0);
+          if (dueDate >= effectiveStart && dueDate >= rangeStart && dueDate <= rangeEnd) {
+            count++;
+          }
+          cursor.setMonth(cursor.getMonth() + 1);
+        }
+        totalExpenses += exp.amount * count;
+      }
+      return; // ← handled
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       ADMIN (non-fixed) — counted once on createdAt
+       ══════════════════════════════════════════════════════════════ */
     if (exp.admin) {
-      if (dateMatches(createdAt)) {
+      const inPeriod = isInPeriod(createdAt, type, singleDate, from, to);
+      if (inPeriod) {
         adminExpenses += exp.amount;
         totalExpenses += exp.amount;
       }
       return;
     }
 
-    /* ── non-fixed, non-admin ── */
-    if (!exp.isFixed) {
-      if (dateMatches(createdAt)) {
-        nonFixedExpenses += exp.amount;
-        totalExpenses += exp.amount;
-      }
-      return;
-    }
-
-    /* ── fixed ── */
-    if (exp.recurrence === "daily") {
-      const count = type === "day" ? 1 : daysInRange();
-      totalExpenses += exp.amount * count;
-    } else if (exp.recurrence === "monthly") {
-      const count = type === "day" ? 1 : monthsInRange();
-      totalExpenses += exp.amount * count;
+    /* ══════════════════════════════════════════════════════════════
+       NON-FIXED, NON-ADMIN — counted once on createdAt
+       ══════════════════════════════════════════════════════════════ */
+    const inPeriod = isInPeriod(createdAt, type, singleDate, from, to);
+    if (inPeriod) {
+      nonFixedExpenses += exp.amount;
+      totalExpenses    += exp.amount;
     }
   });
 
   return { totalExpenses, adminExpenses, nonFixedExpenses };
 }
+
+/**
+ * Simple helper: is date d inside the selected period?
+ */
+function isInPeriod(d, type, singleDate, from, to) {
+  if (type === "day") {
+    return d.toISOString().slice(0, 10) === singleDate;
+  }
+  const fromMs = new Date(from).setHours(0,  0,  0,   0);
+  const toMs   = new Date(to).setHours(23, 59, 59, 999);
+  return d >= fromMs && d <= toMs;
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════
    MAIN CONTROLLER
@@ -1604,3 +1657,597 @@ exports.getExpenseAnalysis = async (req, res) => {
       .json({ success: false, message: "خطأ في جلب تحليل المصروفات" });
   }
 };
+function buildDateRange(type, date, from, to) {
+  if (type === "day") {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+  // range
+  const start = new Date(from);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(to);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+/* ═══════════════════════════════════════════════════════
+   GET EXPENSES HISTORY
+   Query params:
+     type  = "day" | "range"   (default: "day")
+     date  = "YYYY-MM-DD"      (required if type=day)
+     from  = "YYYY-MM-DD"      (required if type=range)
+     to    = "YYYY-MM-DD"      (required if type=range)
+   ═══════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════
+   HELPER: هل يوم معين يُطابق المصروف الثابت الشهري؟
+   monthly → يظهر في نفس رقم اليوم من كل شهر
+   ═══════════════════════════════════════════════════════ */
+function isMonthlyExpenseDueOnDate(expense, date) {
+  const createdDay = new Date(expense.createdAt).getDate(); // رقم اليوم عند الإنشاء (مثلاً 26)
+  const checkDay   = new Date(date).getDate();              // رقم اليوم المراد فحصه
+  return createdDay === checkDay;
+}
+
+/* ═══════════════════════════════════════════════════════
+   HELPER: جلب الأيام الفريدة في نطاق تاريخ
+   ═══════════════════════════════════════════════════════ */
+function getDaysInRange(from, to) {
+  const days = [];
+  const current = new Date(from);
+  current.setHours(12, 0, 0, 0); // منتصف النهار لتجنب مشاكل DST
+  const end = new Date(to);
+  end.setHours(12, 0, 0, 0);
+
+  while (current <= end) {
+    days.push(new Date(current));
+    current.setDate(current.getDate() + 1);
+  }
+  return days;
+}
+
+/* ═══════════════════════════════════════════════════════
+   GET EXPENSES HISTORY
+   type = "day"   → date
+   type = "range" → from, to
+   ═══════════════════════════════════════════════════════ */
+exports.getExpensesHistory = async (req, res) => {
+  try {
+    const { type = "day", date, from, to } = req.query;
+
+    if (type === "day" && !date) {
+      return res.status(400).json({ success: false, message: "يرجى تحديد التاريخ" });
+    }
+    if (type === "range" && (!from || !to)) {
+      return res.status(400).json({ success: false, message: "يرجى تحديد من وإلى" });
+    }
+
+    // ── نطاق التاريخ ──
+    const startDate = type === "day" ? date : from;
+    const endDate   = type === "day" ? date : to;
+
+    const start = new Date(startDate); start.setHours(0, 0, 0, 0);
+    const end   = new Date(endDate);   end.setHours(23, 59, 59, 999);
+
+    // ── جلب كل المصاريف ──
+    const allExpenses = await Expense.find()
+      .populate("user", "name username")
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const history  = [];
+    let totalExpenses    = 0;
+    let adminTotal       = 0;
+    let operationalTotal = 0;
+    let fixedTotal       = 0;
+
+    if (type === "day") {
+      /* ════════════════════════════════
+         وضع يوم محدد
+         ════════════════════════════════ */
+      allExpenses.forEach((exp) => {
+        const createdAt = new Date(exp.createdAt);
+
+        if (!exp.isFixed) {
+          // مصروف عادي → يظهر فقط في يوم إنشائه
+          const expDate = createdAt.toISOString().slice(0, 10);
+          if (expDate !== date) return;
+
+          const entry = buildEntry(exp, exp.amount, createdAt);
+          history.push(entry);
+          totalExpenses += exp.amount;
+          if (exp.admin) adminTotal += exp.amount;
+          else           operationalTotal += exp.amount;
+
+        } else if (exp.recurrence === "daily") {
+          // ثابت يومي → يظهر دائماً في كل يوم
+          // نستخدم تاريخ اليوم المحدد كـ timestamp للعرض
+          const entry = buildEntry(exp, exp.amount, new Date(date + "T00:00:00"), "ثابت يومي");
+          history.push(entry);
+          totalExpenses += exp.amount;
+          fixedTotal    += exp.amount;
+
+        } else if (exp.recurrence === "monthly") {
+          // ثابت شهري → يظهر فقط إذا كان رقم اليوم مطابقاً ليوم الإنشاء
+          if (!isMonthlyExpenseDueOnDate(exp, date)) return;
+          const entry = buildEntry(exp, exp.amount, new Date(date + "T00:00:00"), "ثابت شهري");
+          history.push(entry);
+          totalExpenses += exp.amount;
+          fixedTotal    += exp.amount;
+        }
+      });
+
+    } else {
+      /* ════════════════════════════════
+         وضع مجال تاريخ
+         ════════════════════════════════ */
+      const daysInRange = getDaysInRange(startDate, endDate);
+
+      allExpenses.forEach((exp) => {
+        const createdAt = new Date(exp.createdAt);
+
+        if (!exp.isFixed) {
+          // مصروف عادي → يظهر فقط في يوم إنشائه إذا كان ضمن النطاق
+          if (createdAt < start || createdAt > end) return;
+
+          const entry = buildEntry(exp, exp.amount, createdAt);
+          history.push(entry);
+          totalExpenses += exp.amount;
+          if (exp.admin) adminTotal += exp.amount;
+          else           operationalTotal += exp.amount;
+
+        } else if (exp.recurrence === "daily") {
+          // ثابت يومي → يظهر في كل يوم ضمن النطاق
+          daysInRange.forEach((day) => {
+            const entry = buildEntry(exp, exp.amount, day, "ثابت يومي");
+            history.push(entry);
+            totalExpenses += exp.amount;
+            fixedTotal    += exp.amount;
+          });
+
+        } else if (exp.recurrence === "monthly") {
+          // ثابت شهري → يظهر في كل يوم ضمن النطاق يُطابق رقم يوم الإنشاء
+          const createdDay = createdAt.getDate();
+          daysInRange.forEach((day) => {
+            if (day.getDate() !== createdDay) return;
+            const entry = buildEntry(exp, exp.amount, day, "ثابت شهري");
+            history.push(entry);
+            totalExpenses += exp.amount;
+            fixedTotal    += exp.amount;
+          });
+        }
+      });
+
+      // ترتيب زمني بعد الجمع
+      history.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    }
+
+    return res.json({
+      success: true,
+      type,
+      date:  type === "day"   ? date : undefined,
+      from:  type === "range" ? from : undefined,
+      to:    type === "range" ? to   : undefined,
+      summary: {
+        total:       totalExpenses,
+        admin:       adminTotal,
+        operational: operationalTotal,
+        fixed:       fixedTotal,
+        count:       history.length,
+      },
+      history,
+    });
+  } catch (err) {
+    console.error("❌ getExpensesHistory error:", err);
+    return res.status(500).json({ success: false, message: "خطأ في جلب تاريخ المصاريف" });
+  }
+};
+
+/* ═══════════════════════════════════════════════════════
+   HELPER: بناء كائن العرض لكل مصروف
+   ═══════════════════════════════════════════════════════ */
+function buildEntry(exp, amount, timestamp, fixedLabel = null) {
+  const d = new Date(timestamp);
+  return {
+    _id:         exp._id,
+    description: exp.description,
+    amount,
+    isAdmin:     exp.admin,
+    isFixed:     exp.isFixed,
+    recurrence:  exp.recurrence || null,
+    fixedLabel,                                    // "ثابت يومي" | "ثابت شهري" | null
+    category: exp.isFixed
+      ? (exp.recurrence === "daily" ? "fixed_daily" : "fixed_monthly")
+      : exp.admin
+        ? "admin"
+        : "operational",
+    user:      exp.user?.name || exp.user?.username || "—",
+    timestamp: d.toISOString(),
+    time: d.toLocaleTimeString("ar-DZ", { hour: "2-digit", minute: "2-digit", hour12: false }),
+    date: d.toLocaleDateString("ar-DZ"),
+  };
+}
+
+/* ═══════════════════════════════════════════════════════
+   GET ORDERS HISTORY  (status = "تم الاستلام" only)
+   Query params:
+     type  = "day" | "range"
+     date  = "YYYY-MM-DD"
+     from  = "YYYY-MM-DD"
+     to    = "YYYY-MM-DD"
+   Date field used: statusUpdatedAt
+   ═══════════════════════════════════════════════════════ */
+exports.getOrdersHistory = async (req, res) => {
+  try {
+    const { type = "day", date, from, to } = req.query;
+
+    if (type === "day" && !date) {
+      return res.status(400).json({ success: false, message: "يرجى تحديد التاريخ" });
+    }
+    if (type === "range" && (!from || !to)) {
+      return res.status(400).json({ success: false, message: "يرجى تحديد من وإلى" });
+    }
+
+    const effectiveDate = type === "day" ? date : new Date().toISOString().slice(0, 10);
+    const { start, end } = buildDateRange(type, effectiveDate, from, to);
+
+    const orders = await Order.find({
+      status: "تم الاستلام",
+      statusUpdatedAt: { $gte: start, $lte: end },
+    })
+      .populate("createdBy", "name username")
+      .sort({ statusUpdatedAt: 1 })
+      .lean();
+
+    // Summary
+    let totalRevenue = 0;
+    let totalProfit  = 0;
+    let totalItems   = 0;
+
+    // Group by source
+    const bySource = {};
+
+    const history = orders.map((order) => {
+      const net    = order.total  - (order.discountAmount || 0);
+      const profit = order.profit - (order.discountAmount || 0);
+
+      totalRevenue += net;
+      totalProfit  += profit;
+      totalItems   += order.items.reduce((s, i) => s + i.quantity, 0);
+
+      const src = order.source || "أخرى";
+      if (!bySource[src]) bySource[src] = { count: 0, revenue: 0 };
+      bySource[src].count   += 1;
+      bySource[src].revenue += net;
+
+      return {
+        _id:          order._id,
+        orderNumber:  order.orderNumber,
+        fullName:     order.fullName,
+        phone:        order.phone,
+        state:        order.state,
+        deliveryType: order.deliveryType,
+        source:       order.source,
+        total:        net,
+        profit,
+        discount:     order.discountAmount || 0,
+        itemsCount:   order.items.reduce((s, i) => s + i.quantity, 0),
+        isPaid:       order.isPaid,
+        createdBy:    order.createdBy?.name || order.createdBy?.username || "—",
+        timestamp:    order.statusUpdatedAt,
+        time: new Date(order.statusUpdatedAt).toLocaleTimeString("ar-DZ", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }),
+        date: new Date(order.statusUpdatedAt).toLocaleDateString("ar-DZ"),
+      };
+    });
+
+    const sourceBreakdown = Object.entries(bySource).map(([source, data]) => ({
+      source,
+      count:   data.count,
+      revenue: data.revenue,
+    }));
+
+    return res.json({
+      success: true,
+      type,
+      date:  type === "day"   ? date : undefined,
+      from:  type === "range" ? from : undefined,
+      to:    type === "range" ? to   : undefined,
+      summary: {
+        totalRevenue,
+        totalProfit,
+        totalItems,
+        count:   orders.length,
+        sources: sourceBreakdown,
+      },
+      history,
+    });
+  } catch (err) {
+    console.error("❌ getOrdersHistory error:", err);
+    return res.status(500).json({ success: false, message: "خطأ في جلب تاريخ الطلبيات" });
+  }
+};
+function getDaysInRange(from, to) {
+  const days = [];
+  const cur  = new Date(from); cur.setHours(12, 0, 0, 0);
+  const end  = new Date(to);   end.setHours(12, 0, 0, 0);
+  while (cur <= end) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
+  return days;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   GET PROFIT HISTORY
+   Query: type=day|range  date=YYYY-MM-DD  from=  to=
+   ═══════════════════════════════════════════════════════════════ */
+exports.getProfitHistory = async (req, res) => {
+  try {
+    const { type = "day", date, from, to } = req.query;
+
+    if (type === "day"   && !date)        return res.status(400).json({ success: false, message: "يرجى تحديد التاريخ" });
+    if (type === "range" && (!from || !to)) return res.status(400).json({ success: false, message: "يرجى تحديد من وإلى" });
+
+    /* ── helpers ── */
+    const startDate = type === "day" ? date : from;
+    const endDate   = type === "day" ? date : to;
+
+    const periodStart = new Date(startDate); periodStart.setHours(0,  0,  0,   0);
+    const periodEnd   = new Date(endDate);   periodEnd.setHours(23, 59, 59, 999);
+
+    const inPeriod = (d) => d >= periodStart && d <= periodEnd;
+
+    const days = type === "range" ? getDaysInRange(startDate, endDate) : [new Date(startDate)];
+
+    /* ══════════════════════════════════════════════════════════
+       1.  SALES PROFIT  (same logic as computeSalesForPeriod)
+       ══════════════════════════════════════════════════════════ */
+    const allSales = await Sale.find().lean();
+    const saleEntries = [];   // for the timeline
+    let totalSalesProfit = 0;
+
+    allSales.forEach((sale) => {
+      const createdAt      = new Date(sale.createdAt);
+      const finalPaymentAt = sale.finalPaymentAt ? new Date(sale.finalPaymentAt) : null;
+      const exchangedAt    = sale.exchangedAt    ? new Date(sale.exchangedAt)    : null;
+
+      const discount    = sale.discountAmount      || 0;
+      const prepaid     = sale.prepaidAmount        || 0;
+      const isPrePaid   = sale.isPrePaid;
+      const isExchanged = sale.isExchanged;
+      const isCompleted = !!finalPaymentAt;
+
+      const profitDiff = isExchanged
+        ? (sale.profit - (sale.profitBeforeExchange || 0))
+        : 0;
+
+      /* A. Normal sale, no exchange */
+      if (!isPrePaid && !isExchanged) {
+        if (inPeriod(createdAt)) {
+          const p = sale.profit - discount;
+          totalSalesProfit += p;
+          saleEntries.push({ timestamp: createdAt, label: `بيع — ${sale.barcode}`, profit: p, type: "sale" });
+        }
+      }
+
+      /* B. Normal sale + exchange */
+      if (!isPrePaid && isExchanged) {
+        if (inPeriod(createdAt)) {
+          const p = sale.profitBeforeExchange || 0;
+          totalSalesProfit += p;
+          saleEntries.push({ timestamp: createdAt, label: `بيع — ${sale.barcode}`, profit: p, type: "sale" });
+        }
+        if (exchangedAt && inPeriod(exchangedAt)) {
+          totalSalesProfit += profitDiff;
+          saleEntries.push({ timestamp: exchangedAt, label: `استبدال — ${sale.barcode}`, profit: profitDiff, type: "exchange" });
+        }
+      }
+
+      /* C. PrePaid, no exchange */
+      if (isPrePaid && !isExchanged) {
+        // profit deferred until completion
+        if (isCompleted && finalPaymentAt && inPeriod(finalPaymentAt)) {
+          const p = sale.profit;
+          totalSalesProfit += p;
+          saleEntries.push({ timestamp: finalPaymentAt, label: `إكمال دفع — ${sale.barcode}`, profit: p, type: "prepaid_complete" });
+        }
+      }
+
+      /* D. PrePaid + exchange, not completed */
+      if (isPrePaid && isExchanged && !isCompleted) {
+        if (exchangedAt && inPeriod(exchangedAt)) {
+          totalSalesProfit += profitDiff;
+          saleEntries.push({ timestamp: exchangedAt, label: `استبدال (دفع مسبق) — ${sale.barcode}`, profit: profitDiff, type: "exchange" });
+        }
+      }
+
+      /* E. PrePaid + exchange, completed */
+      if (isPrePaid && isExchanged && isCompleted) {
+        if (exchangedAt && inPeriod(exchangedAt)) {
+          totalSalesProfit += profitDiff;
+          saleEntries.push({ timestamp: exchangedAt, label: `استبدال — ${sale.barcode}`, profit: profitDiff, type: "exchange" });
+        }
+        if (finalPaymentAt && inPeriod(finalPaymentAt)) {
+          const baseProfit = sale.profitBeforeExchange || 0;
+          totalSalesProfit += baseProfit;
+          saleEntries.push({ timestamp: finalPaymentAt, label: `إكمال دفع — ${sale.barcode}`, profit: baseProfit, type: "prepaid_complete" });
+        }
+      }
+    });
+
+    /* ══════════════════════════════════════════════════════════
+       2.  ORDERS PROFIT
+       ══════════════════════════════════════════════════════════ */
+    const allOrders = await Order.find({ status: "تم الاستلام" }).lean();
+    const orderEntries = [];
+    let totalOrdersProfit = 0;
+
+    allOrders.forEach((order) => {
+      const d = new Date(order.statusUpdatedAt);
+      if (!inPeriod(d)) return;
+      const p = order.profit - (order.discountAmount || 0);
+      totalOrdersProfit += p;
+      orderEntries.push({
+        timestamp: d,
+        label: `طلبية #${order.orderNumber} — ${order.fullName}`,
+        profit: p,
+        type: "order",
+      });
+    });
+
+    /* ══════════════════════════════════════════════════════════
+       3.  EXPENSES  (deducted from profit)
+       ══════════════════════════════════════════════════════════ */
+    const allExpenses = await Expense.find().lean();
+    const expenseEntries = [];
+    let totalExpenses = 0;
+
+    allExpenses.forEach((exp) => {
+      const createdAt    = new Date(exp.createdAt);
+      const createdStart = new Date(createdAt); createdStart.setHours(0, 0, 0, 0);
+      const createdDay   = createdAt.getDate();
+
+      /* admin / non-fixed → count once on createdAt */
+      if (!exp.isFixed) {
+        if (inPeriod(createdAt)) {
+          totalExpenses += exp.amount;
+          expenseEntries.push({
+            timestamp: createdAt,
+            label: exp.description,
+            amount: exp.amount,
+            category: exp.admin ? "admin" : "operational",
+          });
+        }
+        return;
+      }
+
+      /* fixed daily → one entry per day in period, starting from createdAt */
+      if (exp.recurrence === "daily") {
+        days.forEach((day) => {
+          const dayStart = new Date(day); dayStart.setHours(0, 0, 0, 0);
+          if (dayStart < createdStart) return; // لم يُنشأ بعد
+          totalExpenses += exp.amount;
+          expenseEntries.push({
+            timestamp: new Date(dayStart),
+            label: `${exp.description} (يومي)`,
+            amount: exp.amount,
+            category: "fixed_daily",
+          });
+        });
+        return;
+      }
+
+      /* fixed monthly → one entry on the matching day-of-month each month */
+      if (exp.recurrence === "monthly") {
+        days.forEach((day) => {
+          const dayStart = new Date(day); dayStart.setHours(0, 0, 0, 0);
+          if (dayStart < createdStart)       return;
+          if (day.getDate() !== createdDay)  return;
+          totalExpenses += exp.amount;
+          expenseEntries.push({
+            timestamp: new Date(dayStart),
+            label: `${exp.description} (شهري)`,
+            amount: exp.amount,
+            category: "fixed_monthly",
+          });
+        });
+      }
+    });
+
+    /* ══════════════════════════════════════════════════════════
+       4.  BUILD TIMELINE
+       ══════════════════════════════════════════════════════════ */
+    const timeline = [];
+
+    saleEntries.forEach((e) => {
+      timeline.push({
+        timestamp: e.timestamp,
+        time: fmtTime(e.timestamp),
+        date: fmtDate(e.timestamp),
+        type: e.type,
+        label: e.label,
+        impact: e.profit,         // + adds to profit
+        expenseAmount: null,
+      });
+    });
+
+    orderEntries.forEach((e) => {
+      timeline.push({
+        timestamp: e.timestamp,
+        time: fmtTime(e.timestamp),
+        date: fmtDate(e.timestamp),
+        type: e.type,
+        label: e.label,
+        impact: e.profit,
+        expenseAmount: null,
+      });
+    });
+
+    expenseEntries.forEach((e) => {
+      timeline.push({
+        timestamp: e.timestamp,
+        time: fmtTime(e.timestamp),
+        date: fmtDate(e.timestamp),
+        type: "expense",
+        category: e.category,
+        label: e.label,
+        impact: -e.amount,        // − deducts from profit
+        expenseAmount: e.amount,
+      });
+    });
+
+    timeline.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    /* running profit */
+    let running = 0;
+    timeline.forEach((entry) => {
+      running += entry.impact;
+      entry.runningProfit = Math.round(running);
+    });
+
+    const netProfit = totalSalesProfit + totalOrdersProfit - totalExpenses;
+
+    /* ── group by date for chart ── */
+    const byDate = {};
+    timeline.forEach((e) => {
+      const d = e.date;
+      if (!byDate[d]) byDate[d] = { date: d, salesProfit: 0, ordersProfit: 0, expenses: 0, net: 0 };
+      if (e.type === "order")            byDate[d].ordersProfit += e.impact;
+      else if (e.type === "expense")     byDate[d].expenses     += e.expenseAmount;
+      else                               byDate[d].salesProfit  += e.impact;
+      byDate[d].net += e.impact;
+    });
+    const chartData = Object.values(byDate);
+
+    return res.json({
+      success: true,
+      type,
+      date:  type === "day"   ? date : undefined,
+      from:  type === "range" ? from : undefined,
+      to:    type === "range" ? to   : undefined,
+      summary: {
+        salesProfit:  Math.round(totalSalesProfit),
+        ordersProfit: Math.round(totalOrdersProfit),
+        expenses:     Math.round(totalExpenses),
+        netProfit:    Math.round(netProfit),
+        count:        timeline.length,
+      },
+      chartData,
+      timeline,
+    });
+  } catch (err) {
+    console.error("❌ getProfitHistory:", err);
+    return res.status(500).json({ success: false, message: "خطأ في جلب تاريخ الأرباح" });
+  }
+};
+
+/* ── utils ── */
+function fmtTime(d) {
+  return new Date(d).toLocaleTimeString("ar-DZ", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+function fmtDate(d) {
+  return new Date(d).toLocaleDateString("ar-DZ");
+}

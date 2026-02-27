@@ -12,6 +12,9 @@ const {
   getTotalRevenue,
   getOrdersSourcesData,
   getRevenueHistory,
+  getExpensesHistory,
+  getOrdersHistory,
+  getProfitHistory,
 } = require("../controllers/analyticsController");
 const { protect } = require("../middleware/authMiddleware");
 
@@ -20,6 +23,9 @@ router.get("/top-products", protect, getTopProducts);
 
 router.get("/revenue-trend", protect, getRevenueTrend);
 router.get("/revenue-history", protect, getRevenueHistory);
+router.get("/expenses-history", protect, getExpensesHistory);
+router.get("/orders-history",   protect, getOrdersHistory);
+router.get("/profit-history", protect, getProfitHistory);
 // Product performance analysis
 router.get("/product-performance", protect, getProductPerformance);
 
