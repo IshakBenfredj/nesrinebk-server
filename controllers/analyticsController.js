@@ -4,205 +4,376 @@ const Expense = require("../models/Expense");
 const Product = require("../models/Product");
 const RevenueChanges = require("../models/RevenuesChanges");
 
-const { parseISO, isSameMonth } = require("date-fns");
-const endOfMonth = require("date-fns/endOfMonth");
+/**
+ * ─────────────────────────────────────────────
+ *  HELPER: does a Date fall inside the window?
+ * ─────────────────────────────────────────────
+ *  type === "day"   → compare YYYY-MM-DD
+ *  type === "range" → from (inclusive) .. to (inclusive, end of day)
+ */
+function makeDateMatcher(type, singleDate, from, to) {
+  if (type === "day") {
+    return (d) => d.toISOString().slice(0, 10) === singleDate;
+  }
+  // range
+  const fromMs = new Date(from).setHours(0, 0, 0, 0);
+  const toMs = new Date(to).setHours(23, 59, 59, 999);
+  return (d) => d >= fromMs && d <= toMs;
+}
 
-exports.getFullSummary = async (req, res) => {
-  try {
-    const { date, type = "day" } = req.query;
-    if (!date) {
-      return res.status(400).json({ success: false, message: "يرجى تحديد التاريخ" });
-    }
+/**
+ * ─────────────────────────────────────────────────────────────────
+ *  SALES LOGIC  (covers all combinations)
+ *
+ *  Cases
+ *  ─────
+ *  A. Normal sale (isPrePaid = false)
+ *     • revenue  += total - discount   on createdAt
+ *     • profit   += profit - discount  on createdAt
+ *
+ *  B. PrePaid, NOT yet completed (finalPaymentAt absent)
+ *     • revenue  += prepaidAmount      on createdAt
+ *     • profit   =  0  (deferred)
+ *
+ *  C. PrePaid, COMPLETED (finalPaymentAt present)
+ *     • revenue  += prepaidAmount              on createdAt
+ *     • revenue  += remaining - discount       on finalPaymentAt
+ *       (remaining = total - prepaidAmount; if ≤ 0 skip it)
+ *       (discount is applied once, on completion)
+ *     • profit   += profit                     on finalPaymentAt
+ *       (profit already accounts for discount + exchange on the model)
+ *
+ *  D. Exchange adjustments (isExchanged = true)
+ *     discount is ALWAYS ignored for exchanges (= 0)
+ *     • For each exchange entry:
+ *         revenue += priceDifference           on exchangedAt
+ *         profit  += (profit - profitBeforeExchange) on exchangedAt
+ *     Special guard (PrePaid + not completed):
+ *       if priceDifference < 0 && total < prepaidAmount → skip deduction
+ *       (the customer already paid more than the new total; no cash flows back)
+ *
+ * ─────────────────────────────────────────────────────────────────
+ */
+function computeSalesForPeriod(sales, dateMatches) {
+  let totalSales = 0;
+  let profitSales = 0;
 
-    let format;
-    if (type === "day") format = "%Y-%m-%d";
-    else if (type === "month") format = "%Y-%m";
-    else if (type === "year") format = "%Y";
+  sales.forEach((sale) => {
+    const createdAt      = new Date(sale.createdAt);
+    const finalPaymentAt = sale.finalPaymentAt ? new Date(sale.finalPaymentAt) : null;
+    const exchangedAt    = sale.exchangedAt    ? new Date(sale.exchangedAt)    : null;
 
-    const isLastDayOfMonth = (inputDate) => {
-      const givenDate = parseISO(inputDate);
-      const endDate = endOfMonth(givenDate);
-      return givenDate.toISOString().slice(0, 10) === endDate.toISOString().slice(0, 10);
-    };
+    const discount   = sale.discountAmount      || 0;
+    const prepaid    = sale.prepaidAmount        || 0;
+    const isPrePaid  = sale.isPrePaid;
+    const isExchanged = sale.isExchanged;
+    const isCompleted = !!finalPaymentAt;
 
-    const shortDate = type === "day" ? date : type === "month" ? date.slice(0, 7) : date.slice(0, 4);
+    // فارق السعر بعد الاستبدال = total الجديد - totalBeforeExchange
+    const priceDiff  = isExchanged
+      ? (sale.total - (sale.totalBeforeExchange || 0))
+      : 0;
 
-    const dateMatches = (d) => {
-      const ds = d.toISOString().slice(0, type === "day" ? 10 : type === "month" ? 7 : 4);
-      return ds === shortDate;
-    };
+    // فارق الربح بعد الاستبدال
+    const profitDiff = isExchanged
+      ? (sale.profit - (sale.profitBeforeExchange || 0))
+      : 0;
 
-    // 1. DATE-FILTERED SALES
-    const sales = await Sale.find().lean();
-
-    let totalSales = 0;
-    let profitSales = 0;
-
-    sales.forEach((sale) => {
-      const createdAt = new Date(sale.createdAt);
-      const finalPaymentAt = sale.finalPaymentAt ? new Date(sale.finalPaymentAt) : null;
-
-      const discount = sale.discountAmount || 0;
-      const currentNet = sale.total - discount;
-
-      // A. Prepaid revenue → on creation (no discount yet)
-      if (sale.isPrePaid && dateMatches(createdAt)) {
-        totalSales += sale.prepaidAmount || 0;
-      }
-
-      // B. Completion: remaining revenue + apply discount + full profit
-      if (sale.isPrePaid && finalPaymentAt && dateMatches(finalPaymentAt)) {
-        const remaining = sale.total - (sale.prepaidAmount || 0);
-        if (remaining > 0) {
-          totalSales += remaining;
-        }
-        totalSales -= discount;           // التخفيض يُطبق هنا فقط
-        profitSales += sale.profit;       // الربح الكامل بعد التخفيض والاستبدال
-      }
-
-      // C. Normal sale or fully prepaid at creation
-      if (!sale.isPrePaid || sale.prepaidAmount >= sale.total) {
+    /* ══════════════════════════════════
+       A. بيع عادي (بدون دفع مسبق)
+       ══════════════════════════════════ */
+    if (!isPrePaid) {
+      if (!isExchanged) {
+        // بيع عادي بسيط
         if (dateMatches(createdAt)) {
-          totalSales += sale.total - discount;
-          profitSales += sale.profit - discount;  // خصم التخفيض من الربح
-        }
-      }
-
-      // D. Exchange adjustments (discount = 0)
-      if (sale.isExchanged && sale.exchanges?.length > 0) {
-        sale.exchanges.forEach((ex) => {
-          const exchangedAt = new Date(ex.exchangedAt);
-          if (dateMatches(exchangedAt)) {
-            let adjAmount = ex.priceDifference;
-
-            // Special protection: if negative exchange and total now < prepaid → do NOT deduct
-            if (adjAmount < 0 && !sale.finalPaymentAt && sale.total < (sale.prepaidAmount || 0)) {
-              adjAmount = 0; // لا ننقص من الماكينة
-            }
-
-            totalSales += adjAmount;
-
-            // Profit change = new profit - old profit
-            const profitDiff = sale.profit - (sale.profitBeforeExchange || 0);
-            profitSales += profitDiff;
-          }
-        });
-      }
-    });
-
-    // 2. DATE-FILTERED ORDERS (unchanged)
-    const orders = await Order.find({
-      $expr: { $eq: [{ $dateToString: { format, date: "$statusUpdatedAt" } }, shortDate] },
-      status: "تم الاستلام",
-    }).populate("items.product", "originalPrice").lean();
-
-    let totalOrders = 0;
-    let profitOrders = 0;
-
-    orders.forEach((order) => {
-      totalOrders += order.total - (order.discountAmount || 0);
-      profitOrders += order.profit - (order.discountAmount || 0);
-    });
-
-    // 3. DATE-FILTERED EXPENSES (unchanged)
-    const expenses = await Expense.find({}).lean();
-    let totalExpenses = 0;
-    let totalNonFixedExpenses = 0;
-    let adminExpenses = 0;
-
-    expenses.forEach((exp) => {
-      const createdAt = exp.createdAt.toISOString();
-      const expDate = createdAt.slice(0, type === "day" ? 10 : type === "month" ? 7 : 4);
-      const matches = expDate === shortDate;
-
-      if (exp.admin) {
-        if (matches) {
-          adminExpenses += exp.amount;
-          totalExpenses += exp.amount;
-        }
-      } else if (!exp.isFixed) {
-        if (matches) {
-          totalNonFixedExpenses += exp.amount;
-          totalExpenses += exp.amount;
+          totalSales  += sale.total - discount;
+          profitSales += sale.profit - discount;
         }
       } else {
-        if (type === "day" && exp.recurrence === "daily") {
-          totalExpenses += exp.amount;
-        } else if (type === "month") {
-          if (exp.recurrence === "daily") {
-            totalExpenses += exp.amount;
-          } else if (exp.recurrence === "monthly" && isLastDayOfMonth(date)) {
-            if (isSameMonth(parseISO(date), exp.createdAt)) {
-              totalExpenses += exp.amount;
-            }
-          }
-        } else if (type === "year") {
-          totalExpenses += exp.amount;
+        // بيع عادي + استبدال
+        // القيمة الأصلية يوم البيع
+        if (dateMatches(createdAt)) {
+          totalSales  += sale.totalBeforeExchange  || 0;
+          profitSales += sale.profitBeforeExchange || 0;
+        }
+        // فارق الاستبدال يوم exchangedAt
+        if (exchangedAt && dateMatches(exchangedAt)) {
+          totalSales  += priceDiff;
+          profitSales += profitDiff;
         }
       }
-    });
+    }
 
-    // 4. ALL-TIME VALUES
-    let allTimeSales = 0;
-    let allTimeSalesProfit = 0;
-
-    sales.forEach((sale) => {
-      const discount = sale.discountAmount || 0;
-      const net = sale.total - discount;
-
-      if (!sale.isPrePaid) {
-        allTimeSales += net;
-        allTimeSalesProfit += sale.profit;
-        return;
+    /* ══════════════════════════════════
+       B & C. دفع مسبق
+       ══════════════════════════════════ */
+    if (isPrePaid) {
+      // B. المبلغ المسبق دائماً يوم الإنشاء
+      if (dateMatches(createdAt)) {
+        totalSales += prepaid;
       }
 
-      allTimeSales += sale.prepaidAmount || 0;
-
-      if (sale.finalPaymentAt) {
-        const remaining = sale.total - (sale.prepaidAmount || 0);
-        allTimeSales += Math.max(0, remaining);
-        allTimeSales -= discount;
-        allTimeSalesProfit += sale.profit;
-      }
-
-      // Special protection for exchanges before completion (all-time)
-      if (sale.isExchanged && sale.exchanges?.length > 0 && !sale.finalPaymentAt) {
-        sale.exchanges.forEach((ex) => {
-          if (ex.priceDifference < 0 && sale.total < (sale.prepaidAmount || 0)) {
-            // No deduction
-          } else {
-            allTimeSales += ex.priceDifference;
+      if (!isExchanged) {
+        // C. دفع مسبق بدون استبدال — إكمال الدفع
+        if (isCompleted && dateMatches(finalPaymentAt)) {
+          const remaining = sale.total - prepaid;
+          if (remaining > 0) totalSales += remaining;
+          totalSales  -= discount;       // التخفيض مرة واحدة عند الاكتمال
+          profitSales += sale.profit;    // الربح الكامل عند الاكتمال
+        }
+      } else {
+        // دفع مسبق + استبدال
+        if (!isCompleted) {
+          // الدفع لم يكتمل بعد — أضف فارق الاستبدال يوم exchangedAt
+          // مع الحماية: إذا total الجديد < prepaid والفارق سالب → لا خصم
+          if (exchangedAt && dateMatches(exchangedAt)) {
+            const safeDiff = (priceDiff < 0 && sale.total < prepaid) ? 0 : priceDiff;
+            totalSales  += safeDiff;
+            profitSales += profitDiff;
           }
-        });
+        } else {
+          // الدفع اكتمل بعد الاستبدال
+          // فارق الاستبدال يوم exchangedAt
+          if (exchangedAt && dateMatches(exchangedAt)) {
+            totalSales  += priceDiff;
+            profitSales += profitDiff;
+          }
+          // إكمال الدفع يوم finalPaymentAt
+          if (dateMatches(finalPaymentAt)) {
+            const remaining = sale.total - prepaid;
+            if (remaining > 0) totalSales += remaining;
+            // لا discount في حالة الاستبدال
+            profitSales += sale.profit - (sale.profitBeforeExchange || 0);
+          }
+        }
       }
-    });
+    }
+  });
 
-    // All-time orders (unchanged)
-    const allOrders = await Order.find({
-      status: { $in: ["تم الاستلام"] },
-    }).populate("items.product", "originalPrice").lean();
+  return { totalSales, profitSales };
+}
 
+/**
+ * All-time version of the same logic (no date filter needed for some parts,
+ * but we still need to accumulate correctly without double-counting).
+ *
+ * For all-time we don't care WHEN things happened, only WHAT the final state is:
+ *   • Normal sale        → total - discount  (once)
+ *   • PrePaid, pending   → prepaidAmount     (money already in the machine)
+ *   • PrePaid, completed → total - discount  (full amount, once)
+ *   • Exchange adj       → + priceDifference (unless guarded)
+ *
+ * Profit all-time:
+ *   • Normal / completed prepaid → sale.profit
+ *   • Pending prepaid            → 0 (deferred)
+ *   • Exchange delta             → profit - profitBeforeExchange
+ */
+function computeSalesAllTime(sales) {
+  let allTimeSales = 0;
+  let allTimeSalesProfit = 0;
+
+  sales.forEach((sale) => {
+    const discount = sale.discountAmount || 0;
+    const prepaid = sale.prepaidAmount || 0;
+    const isPrePaid = sale.isPrePaid;
+    const completed = !!sale.finalPaymentAt;
+
+    if (!isPrePaid) {
+      allTimeSales += sale.total - discount;
+      allTimeSalesProfit += sale.profit - discount;
+      return;
+    }
+
+    // PrePaid
+    if (!completed) {
+      allTimeSales += prepaid; // only prepaid has been received
+      // profit deferred
+    } else {
+      allTimeSales += sale.total - discount; // full amount
+      allTimeSalesProfit += sale.profit;
+    }
+
+    // Exchanges for pending prepaid (guard)
+    if (sale.isExchanged && sale.exchanges && !completed) {
+      sale.exchanges.forEach((ex) => {
+        if (ex.priceDifference < 0 && sale.total < prepaid) return;
+        allTimeSales += ex.priceDifference;
+      });
+    }
+  });
+
+  return { allTimeSales, allTimeSalesProfit };
+}
+
+/**
+ * ─────────────────────────────────────────────
+ *  ORDERS LOGIC
+ * ─────────────────────────────────────────────
+ *  Count only orders with status "تم الاستلام".
+ *  Revenue / profit date = statusUpdatedAt.
+ */
+async function computeOrdersForPeriod(dateMatches, filterQuery) {
+  const orders = await Order.find(filterQuery).lean();
+  let totalOrders = 0;
+  let profitOrders = 0;
+
+  orders.forEach((order) => {
+    const d = new Date(order.statusUpdatedAt);
+    if (!dateMatches(d)) return;
+    totalOrders += order.total - (order.discountAmount || 0);
+    profitOrders += order.profit - (order.discountAmount || 0);
+  });
+
+  return { totalOrders, profitOrders };
+}
+
+/**
+ * ─────────────────────────────────────────────
+ *  EXPENSES LOGIC
+ * ─────────────────────────────────────────────
+ *  - admin expenses      → count on createdAt
+ *  - non-fixed, non-admin → count on createdAt
+ *  - fixed (daily)        → count each matched day
+ *  - fixed (monthly)      → count each matched month (once)
+ *
+ *  For "range" mode we need to know how many days / months are covered.
+ */
+function computeExpenses(expenses, type, singleDate, from, to) {
+  let totalExpenses = 0;
+  let adminExpenses = 0;
+  let nonFixedExpenses = 0;
+
+  // Helper: how many unique calendar-days in the period
+  const daysInRange = () => {
+    const msPerDay = 86400000;
+    return Math.round((new Date(to) - new Date(from)) / msPerDay) + 1;
+  };
+
+  // Helper: how many unique calendar-months in the period
+  const monthsInRange = () => {
+    const f = new Date(from);
+    const t = new Date(to);
+    return (
+      (t.getFullYear() - f.getFullYear()) * 12 +
+      (t.getMonth() - f.getMonth()) +
+      1
+    );
+  };
+
+  const dateMatches = makeDateMatcher(type, singleDate, from, to);
+
+  expenses.forEach((exp) => {
+    const createdAt = new Date(exp.createdAt);
+
+    /* ── admin ── */
+    if (exp.admin) {
+      if (dateMatches(createdAt)) {
+        adminExpenses += exp.amount;
+        totalExpenses += exp.amount;
+      }
+      return;
+    }
+
+    /* ── non-fixed, non-admin ── */
+    if (!exp.isFixed) {
+      if (dateMatches(createdAt)) {
+        nonFixedExpenses += exp.amount;
+        totalExpenses += exp.amount;
+      }
+      return;
+    }
+
+    /* ── fixed ── */
+    if (exp.recurrence === "daily") {
+      const count = type === "day" ? 1 : daysInRange();
+      totalExpenses += exp.amount * count;
+    } else if (exp.recurrence === "monthly") {
+      const count = type === "day" ? 1 : monthsInRange();
+      totalExpenses += exp.amount * count;
+    }
+  });
+
+  return { totalExpenses, adminExpenses, nonFixedExpenses };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MAIN CONTROLLER
+   ═══════════════════════════════════════════════════════════════════ */
+exports.getFullSummary = async (req, res) => {
+  try {
+    const { type = "day", date, from, to } = req.query;
+
+    /* ── Validate inputs ── */
+    if (type === "day" && !date) {
+      return res
+        .status(400)
+        .json({ success: false, message: "يرجى تحديد التاريخ" });
+    }
+    if (type === "range" && (!from || !to)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "يرجى تحديد من وإلى" });
+    }
+
+    const singleDate = type === "day" ? date : null;
+    const dateMatches = makeDateMatcher(type, singleDate, from, to);
+
+    /* ── 1. Sales ── */
+    const allSales = await Sale.find().lean();
+    const { totalSales, profitSales } = computeSalesForPeriod(
+      allSales,
+      dateMatches,
+    );
+    const { allTimeSales, allTimeSalesProfit } = computeSalesAllTime(allSales);
+
+    /* ── 2. Orders (period) ── */
+    // Fetch all "تم الاستلام" orders then filter by statusUpdatedAt in JS
+    // (avoids complex $expr for range queries)
+    const { totalOrders, profitOrders } = await computeOrdersForPeriod(
+      dateMatches,
+      { status: "تم الاستلام" },
+    );
+
+    /* ── 3. Orders (all-time) ── */
+    const allOrders = await Order.find({ status: "تم الاستلام" }).lean();
     let allTimeOrders = 0;
     let allTimeOrdersProfit = 0;
-
-    allOrders.forEach((order) => {
-      allTimeOrders += order.total - (order.discountAmount || 0);
-      allTimeOrdersProfit += order.profit - (order.discountAmount || 0);
+    allOrders.forEach((o) => {
+      allTimeOrders += o.total - (o.discountAmount || 0);
+      allTimeOrdersProfit += o.profit - (o.discountAmount || 0);
     });
 
-    // All-time non-fixed expenses
-    const nonFixedExpenses = await Expense.find({ isFixed: false, admin: false }).lean();
-    const allTimeNonFixed = nonFixedExpenses.reduce((sum, e) => sum + e.amount, 0);
+    /* ── 4. Expenses ── */
+    const allExpenses = await Expense.find().lean();
+    const { totalExpenses, adminExpenses } = computeExpenses(
+      allExpenses,
+      type,
+      singleDate,
+      from,
+      to,
+    );
 
-    // All-time revenue changes
-    const allRevenueChangesDocs = await RevenueChanges.find({}).lean();
-    const allTimeRevenueChanges = allRevenueChangesDocs.reduce((sum, r) => sum + r.amount, 0);
+    /* ── 5. All-time non-fixed, non-admin expenses (for totalRevenue) ── */
+    const allNonFixedExpenses = await Expense.find({
+      isFixed: false,
+      admin: false,
+    }).lean();
+    const allTimeNonFixed = allNonFixedExpenses.reduce(
+      (s, e) => s + e.amount,
+      0,
+    );
 
-    // CAPITAL (unchanged)
-    const products = await Product.find({}).lean();
+    /* ── 6. Revenue changes (all-time, for totalRevenue) ── */
+    const allRevenueChangesDocs = await RevenueChanges.find().lean();
+    const allTimeRevenueChanges = allRevenueChangesDocs.reduce(
+      (s, r) => s + r.amount,
+      0,
+    );
+
+    /* ── 7. Capital ── */
+    const products = await Product.find().lean();
     let totalOCapital = 0;
     let totalCapital = 0;
-
     products.forEach((product) => {
       product.colors.forEach((color) => {
         color.sizes.forEach((size) => {
@@ -212,14 +383,22 @@ exports.getFullSummary = async (req, res) => {
       });
     });
 
-    // FINAL CALCULATIONS
+    /* ── 8. Final totals ── */
+
+    // TURNOVER: sum of sales revenue + orders revenue in the selected period
     const turnover = totalSales + totalOrders;
-    const totalRevenue = allTimeSales - allTimeNonFixed + allTimeRevenueChanges;
+
+    // NET PROFIT: period profits (sales + orders) minus ALL period expenses
     const netProfit = profitSales + profitOrders - totalExpenses;
 
-    res.json({
+    // TOTAL REVENUE (machine): all-time sales - all-time non-fixed/non-admin expenses + revenue changes
+    const totalRevenue = allTimeSales - allTimeNonFixed + allTimeRevenueChanges;
+
+    return res.json({
       success: true,
-      date,
+      date: type === "day" ? date : undefined,
+      from: type === "range" ? from : undefined,
+      to: type === "range" ? to : undefined,
       type,
       sales: {
         totalSales,
@@ -236,7 +415,7 @@ exports.getFullSummary = async (req, res) => {
       expenses: {
         dateFiltered: totalExpenses,
         adminExpenses,
-        allTimeNonFixed: allTimeNonFixed,
+        allTimeNonFixed,
       },
       revenueChanges: allTimeRevenueChanges,
       capital: {
@@ -251,73 +430,116 @@ exports.getFullSummary = async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Error in getFullSummary:", err);
-    res.status(500).json({ success: false, message: "خطأ في حساب الملخص" });
+    return res
+      .status(500)
+      .json({ success: false, message: "خطأ في حساب الملخص" });
   }
 };
 
+function computeSalesRevenue(sales, filter, opts = {}) {
+  const { upTo } = opts;
+
+  // دالة مساعدة: هل التاريخ d يقع ضمن الحد المسموح؟
+  const withinBound = (d) => !upTo || d <= upTo;
+
+  let revenue = 0;
+
+  sales.forEach((sale) => {
+    // تطبيق الفلتر الخارجي إن وُجد
+    if (filter && !filter(sale)) return;
+
+    const discount = sale.discountAmount || 0;
+    const prepaid = sale.prepaidAmount || 0;
+    const isPrePaid = sale.isPrePaid;
+    const finalAt = sale.finalPaymentAt ? new Date(sale.finalPaymentAt) : null;
+    const createdAt = new Date(sale.createdAt);
+
+    /* ── A. بيع عادي ── */
+    if (!isPrePaid) {
+      if (withinBound(createdAt)) {
+        revenue += sale.total - discount;
+      }
+      return;
+    }
+
+    /* ── B / C. دفع مسبق ── */
+    // B: المبلغ المسبق دائماً يُحسب يوم الإنشاء
+    if (withinBound(createdAt)) {
+      revenue += prepaid;
+    }
+
+    // C: الإكمال
+    if (finalAt && withinBound(finalAt)) {
+      const remaining = sale.total - prepaid;
+      if (remaining > 0) revenue += remaining;
+      revenue -= discount; // التخفيض مرة واحدة عند الاكتمال
+    }
+
+    /* ── D. استبدال قبل الاكتمال فقط ── */
+    // إذا اكتمل الدفع: priceDifference مدمج في sale.total → لا نضيفه مجدداً
+    if (sale.isExchanged && sale.exchanges?.length > 0 && !finalAt) {
+      sale.exchanges.forEach((ex) => {
+        const exAt = new Date(ex.exchangedAt);
+        if (!withinBound(exAt)) return;
+
+        let diff = ex.priceDifference;
+
+        // حماية: total الجديد أقل من المسبق + الفارق سالب → لا خصم
+        if (diff < 0 && sale.total < prepaid) {
+          diff = 0;
+        }
+
+        revenue += diff;
+      });
+    }
+  });
+
+  return revenue;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   GET TOTAL REVENUE  —  ماكينة الدفع الكلية (منذ الأزل)
+   ═══════════════════════════════════════════════════════════════════ */
 exports.getTotalRevenue = async (req, res) => {
   try {
     const allSales = await Sale.find().lean();
-    let allTimeSalesRevenue = 0;
 
-    allSales.forEach((sale) => {
-      const discount = sale.discountAmount || 0;
-      const net = sale.total - discount;
+    // كل مبيعات المتجر بدون فلتر تاريخ
+    const salesRevenue = computeSalesRevenue(allSales);
 
-      if (!sale.isPrePaid) {
-        // Normal sale: full amount (with discount)
-        allTimeSalesRevenue += net;
-        return;
-      }
+    // المصاريف غير الثابتة وغير الإدارية فقط
+    const nonFixedExpenses = await Expense.find({
+      isFixed: false,
+      admin: false,
+    }).lean();
+    const totalNonFixed = nonFixedExpenses.reduce((s, e) => s + e.amount, 0);
 
-      // Prepaid sale: always count prepaid
-      allTimeSalesRevenue += sale.prepaidAmount || 0;
+    // تغييرات الخزينة
+    const allRC = await RevenueChanges.find().lean();
+    const totalRC = allRC.reduce((s, r) => s + r.amount, 0);
 
-      // Remaining only if completed
-      if (sale.finalPaymentAt) {
-        const remaining = sale.total - (sale.prepaidAmount || 0);
-        allTimeSalesRevenue += Math.max(0, remaining);
+    const totalRevenue = salesRevenue - totalNonFixed + totalRC;
 
-        // Apply discount only on completion
-        allTimeSalesRevenue -= discount;
-      }
-
-      // Exchange impact (already in sale.total, but for special case before completion)
-      if (sale.isExchanged && sale.exchanges?.length > 0 && !sale.finalPaymentAt) {
-        sale.exchanges.forEach((ex) => {
-          if (ex.priceDifference < 0 && sale.total < sale.prepaidAmount) {
-            // Do not deduct negative difference if new total < prepaid
-            // (no reduction in revenue)
-          } else {
-            allTimeSalesRevenue += ex.priceDifference;
-          }
-        });
-      }
-    });
-
-    const nonFixedExpenses = await Expense.find({ isFixed: false, admin: false }).lean();
-    const allTimeNonFixedExpenses = nonFixedExpenses.reduce((sum, e) => sum + e.amount, 0);
-
-    const allRevenueChanges = await RevenueChanges.find().lean();
-    const allTimeRevenueChanges = allRevenueChanges.reduce((sum, r) => sum + r.amount, 0);
-
-    const totalRevenue = allTimeSalesRevenue - allTimeNonFixedExpenses + allTimeRevenueChanges;
-
-    res.json({
+    return res.json({
       success: true,
       totalRevenue,
       breakdown: {
-        salesRevenue: allTimeSalesRevenue,
-        nonFixedExpenses: allTimeNonFixedExpenses,
-        revenueChanges: allTimeRevenueChanges,
+        salesRevenue,
+        nonFixedExpenses: totalNonFixed,
+        revenueChanges: totalRC,
       },
     });
   } catch (err) {
     console.error("❌ getTotalRevenue error:", err);
-    res.status(500).json({ success: false, message: "خطأ في حساب الإيرادات الكلية" });
+    return res
+      .status(500)
+      .json({ success: false, message: "خطأ في حساب الإيرادات الكلية" });
   }
 };
 
+/* ═══════════════════════════════════════════════════════════════════
+   GET REVENUE HISTORY  —  تاريخ الماكينة ليوم محدد
+   ═══════════════════════════════════════════════════════════════════ */
 exports.getRevenueHistory = async (req, res) => {
   try {
     let { date } = req.query;
@@ -326,111 +548,85 @@ exports.getRevenueHistory = async (req, res) => {
     const startOfDay = new Date(date);
     startOfDay.setHours(0, 0, 0, 0);
 
-    const endOfDay = new Date(startOfDay);
+    const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
 
-    // A. Revenue BEFORE selected day (historical context)
-    const prevDayEnd = new Date(startOfDay);
-    prevDayEnd.setMilliseconds(-1);
+    // نهاية اليوم السابق
+    const prevDayEnd = new Date(startOfDay.getTime() - 1);
 
-    const salesBefore = await Sale.find({
-      createdAt: { $lte: prevDayEnd },
+    // ─────────────────────────────────────────
+    //  A. رصيد الماكينة قبل هذا اليوم (revenueBeforeChanges)
+    // ─────────────────────────────────────────
+    const salesBeforeDay = await Sale.find({
+      $or: [
+        { createdAt: { $lte: prevDayEnd } },
+        { finalPaymentAt: { $lte: prevDayEnd } },
+        { "exchanges.exchangedAt": { $lte: prevDayEnd } },
+      ],
     }).lean();
 
-    let revenueBefore = 0;
+    const revenueBefore = (() => {
+      // نستخدم computeSalesRevenue مع upTo = prevDayEnd
+      const sr = computeSalesRevenue(salesBeforeDay, null, {
+        upTo: prevDayEnd,
+      });
 
-    salesBefore.forEach((s) => {
-      const discount = s.discountAmount || 0;
-      const net = s.total - discount;
+      const expBefore = 0; // سيُحسب أدناه بشكل منفصل للدقة
+      return sr;
+    })();
 
-      if (!s.isPrePaid) {
-        revenueBefore += net;
-      } else {
-        revenueBefore += s.prepaidAmount || 0;
-        if (s.finalPaymentAt && s.finalPaymentAt <= prevDayEnd) {
-          const remaining = s.total - (s.prepaidAmount || 0);
-          revenueBefore += Math.max(0, remaining);
-          revenueBefore -= discount; // discount applied on completion
-        }
-      }
-
-      // Exchange special case before completion
-      if (s.isExchanged && s.exchanges?.length > 0 && !s.finalPaymentAt) {
-        s.exchanges.forEach((ex) => {
-          if (ex.priceDifference < 0 && s.total < s.prepaidAmount) {
-            // No deduction if new total < prepaid
-          } else {
-            revenueBefore += ex.priceDifference;
-          }
-        });
-      }
-    });
-
+    // المصاريف قبل اليوم
     const expensesBefore = await Expense.find({
       createdAt: { $lte: prevDayEnd },
       isFixed: false,
       admin: false,
     }).lean();
-    revenueBefore -= expensesBefore.reduce((s, e) => s + e.amount, 0);
+    const totalExpBefore = expensesBefore.reduce((s, e) => s + e.amount, 0);
 
+    // تغييرات الخزينة قبل اليوم
     const rcBefore = await RevenueChanges.find({
       createdAt: { $lte: prevDayEnd },
     }).lean();
-    revenueBefore += rcBefore.reduce((s, r) => s + r.amount, 0);
+    const totalRCBefore = rcBefore.reduce((s, r) => s + r.amount, 0);
 
-    revenueBefore = Math.round(revenueBefore);
+    const revenueBeforeDay = Math.round(
+      revenueBefore - totalExpBefore + totalRCBefore,
+    );
 
-    // B. All operations UP TO AND INCLUDING the selected date
+    // ─────────────────────────────────────────
+    //  B. الرصيد الكلي حتى نهاية اليوم المحدد
+    // ─────────────────────────────────────────
     const salesUpToDate = await Sale.find({
-      createdAt: { $lte: endOfDay },
+      $or: [
+        { createdAt: { $lte: endOfDay } },
+        { finalPaymentAt: { $lte: endOfDay } },
+        { "exchanges.exchangedAt": { $lte: endOfDay } },
+      ],
     }).lean();
 
-    let totalSalesUpToDate = 0;
-
-    salesUpToDate.forEach((s) => {
-      const discount = s.discountAmount || 0;
-      const net = s.total - discount;
-
-      if (!s.isPrePaid) {
-        totalSalesUpToDate += net;
-      } else {
-        totalSalesUpToDate += s.prepaidAmount || 0;
-        if (s.finalPaymentAt && s.finalPaymentAt <= endOfDay) {
-          const remaining = s.total - (s.prepaidAmount || 0);
-          totalSalesUpToDate += Math.max(0, remaining);
-          totalSalesUpToDate -= discount;
-        }
-      }
-
-      // Exchange special case before completion
-      if (s.isExchanged && s.exchanges?.length > 0 && !s.finalPaymentAt) {
-        s.exchanges.forEach((ex) => {
-          if (ex.priceDifference < 0 && s.total < s.prepaidAmount) {
-            // No deduction
-          } else {
-            totalSalesUpToDate += ex.priceDifference;
-          }
-        });
-      }
+    const salesRevUpToDate = computeSalesRevenue(salesUpToDate, null, {
+      upTo: endOfDay,
     });
 
-    const expensesUpToDate = await Expense.find({
+    const expUpToDate = await Expense.find({
       createdAt: { $lte: endOfDay },
       isFixed: false,
       admin: false,
     }).lean();
-    const totalExpensesUpToDate = expensesUpToDate.reduce((s, e) => s + e.amount, 0);
+    const totalExpUpToDate = expUpToDate.reduce((s, e) => s + e.amount, 0);
 
-    const revenueChangesUpToDate = await RevenueChanges.find({
+    const rcUpToDate = await RevenueChanges.find({
       createdAt: { $lte: endOfDay },
     }).lean();
-    const totalRevenueChangesUpToDate = revenueChangesUpToDate.reduce((s, r) => s + r.amount, 0);
+    const totalRCUpToDate = rcUpToDate.reduce((s, r) => s + r.amount, 0);
 
     const totalRevenueUpToDate = Math.round(
-      totalSalesUpToDate - totalExpensesUpToDate + totalRevenueChangesUpToDate
+      salesRevUpToDate - totalExpUpToDate + totalRCUpToDate,
     );
 
-    // C. Only changes THAT HAPPENED on the selected day
+    // ─────────────────────────────────────────
+    //  C. الأحداث التي وقعت خلال اليوم المحدد
+    // ─────────────────────────────────────────
     const daySales = await Sale.find({
       $or: [
         { createdAt: { $gte: startOfDay, $lte: endOfDay } },
@@ -451,70 +647,97 @@ exports.getRevenueHistory = async (req, res) => {
 
     const changes = [];
 
+    // ── معالجة المبيعات ──
     daySales.forEach((sale) => {
-      const createdInDay = sale.createdAt >= startOfDay && sale.createdAt <= endOfDay;
-      const completedInDay = sale.finalPaymentAt && sale.finalPaymentAt >= startOfDay && sale.finalPaymentAt <= endOfDay;
-      const exchangesInDay = sale.exchanges?.filter((ex) => {
-        const exDate = new Date(ex.exchangedAt);
-        return exDate >= startOfDay && exDate <= endOfDay;
-      }) || [];
+      const discount = sale.discountAmount || 0;
+      const prepaid = sale.prepaidAmount || 0;
+      const isPrePaid = sale.isPrePaid;
+      const finalAt = sale.finalPaymentAt
+        ? new Date(sale.finalPaymentAt)
+        : null;
+      const createdAt = new Date(sale.createdAt);
 
-      if (sale.isPrePaid) {
+      const createdInDay = createdAt >= startOfDay && createdAt <= endOfDay;
+      const completedInDay =
+        finalAt && finalAt >= startOfDay && finalAt <= endOfDay;
+
+      const exchangesInDay = (sale.exchanges || []).filter((ex) => {
+        const d = new Date(ex.exchangedAt);
+        return d >= startOfDay && d <= endOfDay;
+      });
+
+      /* ── بيع عادي ── */
+      if (!isPrePaid) {
+        if (createdInDay) {
+          changes.push({
+            type: "sale",
+            description: `بيع عادي — ${sale.barcode}`,
+            amount: sale.total - discount,
+            timestamp: sale.createdAt,
+          });
+        }
+      }
+
+      /* ── دفع مسبق ── */
+      if (isPrePaid) {
+        // المبلغ المسبق
         if (createdInDay) {
           changes.push({
             type: "prepaid",
-            description: `دفع مسبق - ${sale.barcode}`,
-            amount: sale.prepaidAmount || 0,
+            description: `دفع مسبق — ${sale.barcode}`,
+            amount: prepaid,
             timestamp: sale.createdAt,
           });
         }
 
+        // إكمال الدفع
         if (completedInDay) {
-          const remaining = sale.total - (sale.prepaidAmount || 0);
+          const remaining = sale.total - prepaid;
+
           if (remaining > 0) {
             changes.push({
               type: "final_payment",
-              description: `إكمال دفع متبقي - ${sale.barcode}`,
+              description: `إكمال الدفع المتبقي — ${sale.barcode}`,
               amount: remaining,
               timestamp: sale.finalPaymentAt,
             });
           }
 
-          if (sale.discountAmount > 0) {
+          // التخفيض مرة واحدة عند الاكتمال
+          if (discount > 0) {
             changes.push({
               type: "discount",
-              description: `تطبيق التخفيض - ${sale.barcode}`,
-              amount: -sale.discountAmount,
+              description: `تطبيق التخفيض — ${sale.barcode}`,
+              amount: -discount,
               timestamp: sale.finalPaymentAt,
             });
           }
         }
-      } else if (createdInDay) {
-        const net = sale.total - (sale.discountAmount || 0);
-        changes.push({
-          type: "sale",
-          description: `بيع عادي - ${sale.barcode}`,
-          amount: net,
-          timestamp: sale.createdAt,
-        });
       }
 
-      // Exchanges with protection
-      exchangesInDay.forEach((ex) => {
-        let amount = ex.priceDifference;
-        // Special rule: if negative difference and new total < prepaid → no deduction
-        if (amount < 0 && !sale.finalPaymentAt && sale.total < (sale.prepaidAmount || 0)) {
-          amount = 0;
-        }
-        changes.push({
-          type: "exchange",
-          description: `استبدال - فرق ${ex.priceDifference} دج - ${sale.barcode}`,
-          amount: amount,
-          timestamp: ex.exchangedAt,
+      /* ── استبدالات اليوم ── */
+      // نُضيف priceDifference فقط إذا لم يكتمل الدفع بعد
+      // (إذا اكتمل: priceDifference مدمج في sale.total المحسوب أعلاه)
+      if (!finalAt) {
+        exchangesInDay.forEach((ex) => {
+          let amount = ex.priceDifference;
+
+          // حماية: total جديد < prepaid + فارق سالب → لا خصم
+          if (amount < 0 && sale.total < prepaid) {
+            amount = 0;
+          }
+
+          changes.push({
+            type: "exchange",
+            description: `استبدال — فرق ${ex.priceDifference > 0 ? "+" : ""}${ex.priceDifference} دج — ${sale.barcode}`,
+            amount,
+            timestamp: ex.exchangedAt,
+          });
         });
-      });
+      }
     });
 
+    // ── المصاريف ──
     dayExpenses.forEach((exp) => {
       changes.push({
         type: "expense",
@@ -524,6 +747,7 @@ exports.getRevenueHistory = async (req, res) => {
       });
     });
 
+    // ── تغييرات الخزينة ──
     dayRC.forEach((rc) => {
       changes.push({
         type: "revenue_change",
@@ -533,9 +757,10 @@ exports.getRevenueHistory = async (req, res) => {
       });
     });
 
+    // ── ترتيب زمني + رصيد متراكم ──
     changes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-    let running = revenueBefore;
+    let running = revenueBeforeDay;
     const dailyHistory = changes.map((c) => {
       running += c.amount;
       return {
@@ -549,17 +774,19 @@ exports.getRevenueHistory = async (req, res) => {
       };
     });
 
-    res.json({
+    return res.json({
       success: true,
       selectedDate: date,
-      revenueBeforeChanges: revenueBefore,
+      revenueBeforeChanges: revenueBeforeDay,
       totalRevenueUpToDate,
       dailyChangesCount: changes.length,
       dailyHistory,
     });
   } catch (err) {
-    console.error("Error in getRevenueHistory:", err);
-    res.status(500).json({ success: false, message: "خطأ في جلب تاريخ الإيرادات" });
+    console.error("❌ getRevenueHistory error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "خطأ في جلب تاريخ الإيرادات" });
   }
 };
 
