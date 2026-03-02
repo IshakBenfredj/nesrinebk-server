@@ -847,13 +847,6 @@ exports.getTopProducts = async (req, res) => {
   try {
     const { period, day, month, year } = req.query;
 
-    if (!period || !year) {
-      return res.status(400).json({
-        success: false,
-        message: "يرجى تحديد الفترة (day أو month أو year) والسنة",
-      });
-    }
-
     const yearNum = parseInt(year);
     const monthNum = month ? parseInt(month) : null;
     const dayNum = day ? parseInt(day) : null;
