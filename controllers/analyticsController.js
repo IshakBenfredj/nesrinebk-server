@@ -725,7 +725,7 @@ exports.getRevenueHistory = async (req, res) => {
           changes.push({
             type: "sale",
             description: `بيع عادي — ${sale.barcode}`,
-            amount: sale.total - discount,
+            amount: sale.total,
             timestamp: sale.createdAt,
           });
         }
