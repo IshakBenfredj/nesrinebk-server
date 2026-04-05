@@ -18,7 +18,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["admin", "social_media", "worker"],
+      enum: ["admin", "social_media", "worker", "inventory_manager"],
       default: "worker",
     },
     bonusPercentage: {

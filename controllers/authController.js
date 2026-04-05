@@ -153,11 +153,11 @@ exports.editUser = async (req, res) => {
   }
 
   // Validate role
-  const validRoles = ["admin", "social_media", "worker"];
+  const validRoles = ["admin", "social_media", "worker", "inventory_manager"];
   if (!validRoles.includes(role)) {
     return res.status(400).json({
       success: false,
-      message: "الصلاحية المحددة غير صالحة",
+      message: "الدور المحدد غير صالح",
     });
   }
 
