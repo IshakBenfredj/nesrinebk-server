@@ -1,11 +1,9 @@
 const Product = require("../models/Product");
 const StockHistory = require("../models/StockHistory");
+const ProductHistory = require("../models/ProductHistory");
 
 const { generateBarcode } = require("../utils/barcodeGenerator");
-const {
-  uploadMultipleImages,
-  deleteFileByUrl,
-} = require("../utils/r2Storage");
+const { uploadMultipleImages, deleteFileByUrl } = require("../utils/r2Storage");
 
 exports.createProduct = async (req, res) => {
   try {
@@ -187,168 +185,361 @@ exports.getProductById = async (req, res) => {
 function isCloudinaryUrl(url) {
   try {
     const parsed = new URL(url);
-    return parsed.hostname === 'res.cloudinary.com' ||
-           parsed.hostname.endsWith('.cloudinary.com');
+    return (
+      parsed.hostname === "res.cloudinary.com" ||
+      parsed.hostname.endsWith(".cloudinary.com")
+    );
   } catch {
     return false;
   }
 }
-exports.updateProduct = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, price, category, colors, fabric, originalPrice } = req.body;
-    const userId = req.user?._id;
+// exports.updateProduct = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { name, price, category, colors, fabric, originalPrice } = req.body;
+//     const userId = req.user?._id;
 
-    if (
-      !name ||
-      !price ||
-      !originalPrice ||
-      !category ||
-      !Array.isArray(category) ||
-      category.length === 0 ||
-      !colors ||
-      colors.length === 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "الحقول المطلوبة مفقودة: الاسم، السعر، التصنيف، الألوان",
-        data: null,
-      });
-    }
+//     if (
+//       !name ||
+//       !price ||
+//       !originalPrice ||
+//       !category ||
+//       !Array.isArray(category) ||
+//       category.length === 0 ||
+//       !colors ||
+//       colors.length === 0
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "الحقول المطلوبة مفقودة: الاسم، السعر، التصنيف، الألوان",
+//         data: null,
+//       });
+//     }
 
-    const product = await Product.findById(id);
-    if (!product) {
-      return res
-        .status(404)
-        .json({ success: false, message: "المنتج غير موجود" });
-    }
+//     const product = await Product.findById(id);
+//     if (!product) {
+//       return res
+//         .status(404)
+//         .json({ success: false, message: "المنتج غير موجود" });
+//     }
 
-    const oldColors = JSON.parse(JSON.stringify(product.colors));
+//     const oldColors = JSON.parse(JSON.stringify(product.colors));
 
-    const processedColors = await Promise.all(
-      colors.map(async (color) => {
-        const existingColor = product.colors.find(
-          (c) => c.color === color.color,
-        );
+//     const processedColors = await Promise.all(
+//       colors.map(async (color) => {
+//         const existingColor = product.colors.find(
+//           (c) => c.color === color.color,
+//         );
 
-        const base64Images = (color.images || []).filter((img) =>
-          img.startsWith("data:"),
-        );
-        const retainedImages = (color.images || []).filter(
-          (img) => !img.startsWith("data:"),
-        );
-        
+//         const base64Images = (color.images || []).filter((img) =>
+//           img.startsWith("data:"),
+//         );
+//         const retainedImages = (color.images || []).filter(
+//           (img) => !img.startsWith("data:"),
+//         );
 
-        const newUploadedImages =
-          base64Images.length > 0
-            ? await uploadMultipleImages(base64Images)
-            : [];
+//         const newUploadedImages =
+//           base64Images.length > 0
+//             ? await uploadMultipleImages(base64Images)
+//             : [];
 
-        const previousImages = existingColor?.images || [];
-        const removedImages = previousImages.filter(
-          (img) => !retainedImages.includes(img) && !isCloudinaryUrl(img),
-        );
-        await Promise.all(
-          removedImages.map((img) => deleteFileByUrl(img)),
-        );
+//         const previousImages = existingColor?.images || [];
+//         const removedImages = previousImages.filter(
+//           (img) => !retainedImages.includes(img) && !isCloudinaryUrl(img),
+//         );
+//         await Promise.all(removedImages.map((img) => deleteFileByUrl(img)));
 
-        return {
-          ...color,
-          images: [...retainedImages, ...newUploadedImages],
-          sizes: color.sizes.map((size) => {
-            const existingSize = existingColor?.sizes?.find(
-              (s) => s.size === size.size,
-            );
-            return {
-              ...size,
-              barcode: existingSize?.barcode || generateBarcode(),
-            };
-          }),
-        };
-      }),
-    );
+//         return {
+//           ...color,
+//           images: [...retainedImages, ...newUploadedImages],
+//           sizes: color.sizes.map((size) => {
+//             const existingSize = existingColor?.sizes?.find(
+//               (s) => s.size === size.size,
+//             );
+//             return {
+//               ...size,
+//               barcode: existingSize?.barcode || generateBarcode(),
+//             };
+//           }),
+//         };
+//       }),
+//     );
 
-    product.name = name;
-    product.price = price;
-    product.category = category;
-    product.originalPrice = originalPrice;
-    product.colors = processedColors;
-    if (fabric) product.fabric = fabric;
+//     product.name = name;
+//     product.price = price;
+//     product.category = category;
+//     product.originalPrice = originalPrice;
+//     product.colors = processedColors;
 
-    // 📜 Logging changes
-    const historyDocs = [];
-    processedColors.forEach((color) => {
-      color.sizes.forEach((size) => {
-        const oldQty =
-          oldColors
-            .find((c) => c.color === color.color)
-            ?.sizes.find((s) => s.size === size.size)?.quantity || 0;
+//     // ###########################################################
+//     // 📜 Comprehensive History Logging
+//     const historyDocs = [];
 
-        const changeAmount = size.quantity - oldQty;
-        if (changeAmount !== 0) {
-          historyDocs.push({
-            productId: product._id,
-            productName: product.name,
-            color: color.color,
-            size: size.size,
-            changeAmount,
-            newQuantity: size.quantity,
-            worker: userId,
-          });
-        }
-      });
-    });
-    if (historyDocs.length) await StockHistory.insertMany(historyDocs);
+//     // 1. Detect top-level changes
+//     const oldName = product.name;
+//     const oldPrice = product.price;
+//     const oldOriginalPrice = product.originalPrice;
+//     const oldFabric = product.fabric;
+//     const oldCategory = product.category;
 
-    await product.save();
-    await product.populate("category");
+//     if (name !== oldName) {
+//       historyDocs.push({
+//         productId: product._id,
+//         productName: name,
+//         action: "product_updated",
+//         details: { field: "name", old: oldName, new: name },
+//         worker: userId,
+//       });
+//     }
+//     if (price !== oldPrice) {
+//       historyDocs.push({
+//         productId: product._id,
+//         productName: name,
+//         action: "product_updated",
+//         details: { field: "price", old: oldPrice, new: price },
+//         worker: userId,
+//       });
+//     }
+//     if (originalPrice !== oldOriginalPrice) {
+//       historyDocs.push({
+//         productId: product._id,
+//         productName: name,
+//         action: "product_updated",
+//         details: {
+//           field: "originalPrice",
+//           old: oldOriginalPrice,
+//           new: originalPrice,
+//         },
+//         worker: userId,
+//       });
+//     }
+//     if (fabric && fabric !== oldFabric) {
+//       historyDocs.push({
+//         productId: product._id,
+//         productName: name,
+//         action: "product_updated",
+//         details: { field: "fabric", old: oldFabric, new: fabric },
+//         worker: userId,
+//       });
+//     }
+//     // Category changes can be compared if needed (arrays)
 
-    res.json({
-      success: true,
-      message: "تم تحديث المنتج بنجاح",
-      data: product,
-    });
-  } catch (error) {
-    console.error("Error updating product:", error);
-    res.status(500).json({
-      success: false,
-      message: "حدث خطأ أثناء تحديث المنتج",
-      data: null,
-    });
-  }
-};
+//     // 2. Color & Size level changes
+//     const oldColorsMap = new Map(oldColors.map((c) => [c.color, c]));
 
-exports.deleteProduct = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "المنتج غير موجود",
-        data: null,
-      });
-    }
+//     processedColors.forEach((newColor) => {
+//       const oldColor = oldColorsMap.get(newColor.color);
 
-    // Delete all images from R2
-    const imageUrls = product.colors.flatMap((color) => color.images || []);
-    await Promise.all(imageUrls.map((url) => deleteFileByUrl(url)));
+//       if (!oldColor) {
+//         // New color added
+//         historyDocs.push({
+//           productId: product._id,
+//           productName: name,
+//           action: "color_added",
+//           details: {
+//             color: newColor.color,
+//             sizesCount: newColor.sizes.length,
+//             imagesCount: newColor.images.length,
+//           },
+//           color: newColor.color,
+//           worker: userId,
+//         });
+//       } else {
+//         // Color exists → check sizes & images
 
-    await product.deleteOne();
+//         const oldSizesMap = new Map(oldColor.sizes.map((s) => [s.size, s]));
 
-    res.json({
-      success: true,
-      message: "تم حذف المنتج بنجاح",
-      data: null,
-    });
-  } catch (error) {
-    console.error("Error deleting product:", error);
-    res.status(500).json({
-      success: false,
-      message: "حدث خطأ أثناء حذف المنتج",
-      data: null,
-    });
-  }
-};
+//         newColor.sizes.forEach((newSize) => {
+//           const oldSize = oldSizesMap.get(newSize.size);
+
+//           if (!oldSize) {
+//             // New size added
+//             historyDocs.push({
+//               productId: product._id,
+//               productName: name,
+//               action: "size_added",
+//               details: {
+//                 color: newColor.color,
+//                 size: newSize.size,
+//                 quantity: newSize.quantity,
+//                 barcode: newSize.barcode,
+//               },
+//               color: newColor.color,
+//               size: newSize.size,
+//               worker: userId,
+//             });
+//           } else if (oldSize.quantity !== newSize.quantity) {
+//             // Quantity changed (keep your existing stock logic too)
+//             const changeAmount = newSize.quantity - oldSize.quantity;
+//             historyDocs.push({
+//               productId: product._id,
+//               productName: name,
+//               action: "stock_changed",
+//               details: {
+//                 color: newColor.color,
+//                 size: newSize.size,
+//                 oldQuantity: oldSize.quantity,
+//                 newQuantity: newSize.quantity,
+//                 changeAmount,
+//               },
+//               color: newColor.color,
+//               size: newSize.size,
+//               worker: userId,
+//             });
+//           }
+//         });
+
+//         // Detect removed sizes
+//         oldColor.sizes.forEach((oldSize) => {
+//           if (!newColor.sizes.some((ns) => ns.size === oldSize.size)) {
+//             historyDocs.push({
+//               productId: product._id,
+//               productName: name,
+//               action: "size_removed",
+//               details: {
+//                 color: newColor.color,
+//                 size: oldSize.size,
+//                 oldQuantity: oldSize.quantity,
+//               },
+//               color: newColor.color,
+//               size: oldSize.size,
+//               worker: userId,
+//             });
+//           }
+//         });
+
+//         // Image changes
+//         const oldImages = oldColor.images || [];
+//         const newImages = newColor.images || [];
+
+//         const addedImages = newImages.filter((img) => !oldImages.includes(img));
+//         const removedImages = oldImages.filter(
+//           (img) => !newImages.includes(img),
+//         );
+
+//         addedImages.forEach((url) => {
+//           historyDocs.push({
+//             productId: product._id,
+//             productName: name,
+//             action: "image_added",
+//             details: { color: newColor.color, imageUrl: url },
+//             color: newColor.color,
+//             worker: userId,
+//           });
+//         });
+
+//         removedImages.forEach((url) => {
+//           historyDocs.push({
+//             productId: product._id,
+//             productName: name,
+//             action: "image_removed",
+//             details: { color: newColor.color, imageUrl: url },
+//             color: newColor.color,
+//             worker: userId,
+//           });
+//         });
+//       }
+//     });
+
+//     // Detect completely removed colors
+//     oldColors.forEach((oldColor) => {
+//       if (!processedColors.some((nc) => nc.color === oldColor.color)) {
+//         historyDocs.push({
+//           productId: product._id,
+//           productName: name,
+//           action: "color_removed",
+//           details: {
+//             color: oldColor.color,
+//             sizesCount: oldColor.sizes.length,
+//             imagesCount: oldColor.images.length,
+//           },
+//           color: oldColor.color,
+//           worker: userId,
+//         });
+//       }
+//     });
+
+//     if (historyDocs.length > 0) {
+//       await ProductHistory.insertMany(historyDocs);
+//     }
+
+//     // ###########################################################
+//     if (fabric) product.fabric = fabric;
+
+//     // 📜 Logging changes
+//     const historyDocs = [];
+//     processedColors.forEach((color) => {
+//       color.sizes.forEach((size) => {
+//         const oldQty =
+//           oldColors
+//             .find((c) => c.color === color.color)
+//             ?.sizes.find((s) => s.size === size.size)?.quantity || 0;
+
+//         const changeAmount = size.quantity - oldQty;
+//         if (changeAmount !== 0) {
+//           historyDocs.push({
+//             productId: product._id,
+//             productName: product.name,
+//             color: color.color,
+//             size: size.size,
+//             changeAmount,
+//             newQuantity: size.quantity,
+//             worker: userId,
+//           });
+//         }
+//       });
+//     });
+//     if (historyDocs.length) await StockHistory.insertMany(historyDocs);
+
+//     await product.save();
+//     await product.populate("category");
+
+//     res.json({
+//       success: true,
+//       message: "تم تحديث المنتج بنجاح",
+//       data: product,
+//     });
+//   } catch (error) {
+//     console.error("Error updating product:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "حدث خطأ أثناء تحديث المنتج",
+//       data: null,
+//     });
+//   }
+// };
+
+// exports.deleteProduct = async (req, res) => {
+//   try {
+//     const product = await Product.findById(req.params.id);
+//     if (!product) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "المنتج غير موجود",
+//         data: null,
+//       });
+//     }
+
+//     // Delete all images from R2
+//     const imageUrls = product.colors.flatMap((color) => color.images || []);
+//     await Promise.all(imageUrls.map((url) => deleteFileByUrl(url)));
+
+//     await product.deleteOne();
+
+//     res.json({
+//       success: true,
+//       message: "تم حذف المنتج بنجاح",
+//       data: null,
+//     });
+//   } catch (error) {
+//     console.error("Error deleting product:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "حدث خطأ أثناء حذف المنتج",
+//       data: null,
+//     });
+//   }
+// };
 
 // exports.updateSizeQuantity = async (req, res) => {
 //   try {
@@ -426,6 +617,330 @@ exports.deleteProduct = async (req, res) => {
 //     });
 //   }
 // };
+
+exports.updateProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, price, category, colors, fabric, originalPrice } = req.body;
+    const userId = req.user?._id;
+
+    // Basic validation
+    if (
+      !name ||
+      !price ||
+      !originalPrice ||
+      !category ||
+      !Array.isArray(category) ||
+      category.length === 0 ||
+      !colors ||
+      !Array.isArray(colors) ||
+      colors.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "الحقول المطلوبة مفقودة: الاسم، السعر، التصنيف، الألوان",
+        data: null,
+      });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "المنتج غير موجود" });
+    }
+
+    // ==================== TAKE OLD SNAPSHOT ====================
+    const oldData = {
+      name: product.name,
+      price: Number(product.price),
+      originalPrice: Number(product.originalPrice),
+      fabric: product.fabric,
+      colors: JSON.parse(JSON.stringify(product.colors)), // deep clone
+    };
+
+    console.log("Old Name:", oldData.name);
+    console.log("New Name from body:", name);
+
+    // ==================== PROCESS COLORS & IMAGES ====================
+    const processedColors = await Promise.all(
+      colors.map(async (color) => {
+        const existingColor = product.colors.find((c) => c.color === color.color);
+
+        const base64Images = (color.images || []).filter((img) => img.startsWith("data:"));
+        const retainedImages = (color.images || []).filter((img) => !img.startsWith("data:"));
+
+        const newUploadedImages = base64Images.length > 0
+          ? await uploadMultipleImages(base64Images)
+          : [];
+
+        // Delete removed images
+        const previousImages = existingColor?.images || [];
+        const removedImages = previousImages.filter(
+          (img) => !retainedImages.includes(img) && !isCloudinaryUrl(img)
+        );
+        await Promise.all(removedImages.map((img) => deleteFileByUrl(img)));
+
+        return {
+          ...color,
+          images: [...retainedImages, ...newUploadedImages],
+          sizes: color.sizes.map((size) => {
+            const existingSize = existingColor?.sizes?.find((s) => s.size === size.size);
+            return {
+              ...size,
+              barcode: existingSize?.barcode || generateBarcode(),
+            };
+          }),
+        };
+      })
+    );
+
+    // ==================== APPLY CHANGES ====================
+    product.name = name;
+    product.price = price;
+    product.originalPrice = originalPrice;
+    product.category = category;
+    product.colors = processedColors;
+    if (fabric !== undefined) product.fabric = fabric;
+
+    // ==================== BUILD HISTORY DOCS ====================
+    const historyDocs = [];
+
+    // Top-level changes
+    if (name !== oldData.name) {
+      historyDocs.push({
+        productId: product._id,
+        productName: name,
+        action: "product_updated",
+        details: { field: "name", old: oldData.name, new: name },
+        worker: userId,
+      });
+    }
+
+    if (Number(price) !== oldData.price) {
+      historyDocs.push({
+        productId: product._id,
+        productName: name,
+        action: "product_updated",
+        details: { field: "price", old: oldData.price, new: price },
+        worker: userId,
+      });
+    }
+
+    if (Number(originalPrice) !== oldData.originalPrice) {
+      historyDocs.push({
+        productId: product._id,
+        productName: name,
+        action: "product_updated",
+        details: { field: "originalPrice", old: oldData.originalPrice, new: originalPrice },
+        worker: userId,
+      });
+    }
+
+    if (fabric !== undefined && fabric !== oldData.fabric) {
+      historyDocs.push({
+        productId: product._id,
+        productName: name,
+        action: "product_updated",
+        details: { field: "fabric", old: oldData.fabric, new: fabric },
+        worker: userId,
+      });
+    }
+
+    // Color / Size / Image changes
+    const oldColorsMap = new Map(oldData.colors.map((c) => [c.color, c]));
+
+    processedColors.forEach((newColor) => {
+      const oldColor = oldColorsMap.get(newColor.color);
+
+      if (!oldColor) {
+        // New color added
+        historyDocs.push({
+          productId: product._id,
+          productName: name,
+          action: "color_added",
+          details: {
+            color: newColor.color,
+            sizesCount: newColor.sizes.length,
+            imagesCount: newColor.images.length,
+          },
+          color: newColor.color,
+          worker: userId,
+        });
+      } else {
+        const oldSizesMap = new Map(oldColor.sizes.map((s) => [s.size, s]));
+
+        // New or changed sizes
+        newColor.sizes.forEach((newSize) => {
+          const oldSize = oldSizesMap.get(newSize.size);
+
+          if (!oldSize) {
+            historyDocs.push({
+              productId: product._id,
+              productName: name,
+              action: "size_added",
+              details: {
+                color: newColor.color,
+                size: newSize.size,
+                quantity: newSize.quantity,
+                barcode: newSize.barcode,
+              },
+              color: newColor.color,
+              size: newSize.size,
+              worker: userId,
+            });
+          } else if (oldSize.quantity !== newSize.quantity) {
+            const changeAmount = newSize.quantity - oldSize.quantity;
+            historyDocs.push({
+              productId: product._id,
+              productName: name,
+              action: "stock_changed",
+              details: {
+                color: newColor.color,
+                size: newSize.size,
+                oldQuantity: oldSize.quantity,
+                newQuantity: newSize.quantity,
+                changeAmount,
+              },
+              color: newColor.color,
+              size: newSize.size,
+              worker: userId,
+            });
+          }
+        });
+
+        // Removed sizes
+        oldColor.sizes.forEach((oldSize) => {
+          if (!newColor.sizes.some((ns) => ns.size === oldSize.size)) {
+            historyDocs.push({
+              productId: product._id,
+              productName: name,
+              action: "size_removed",
+              details: {
+                color: newColor.color,
+                size: oldSize.size,
+                oldQuantity: oldSize.quantity,
+              },
+              color: newColor.color,
+              size: oldSize.size,
+              worker: userId,
+            });
+          }
+        });
+
+        // Images
+        const oldImages = oldColor.images || [];
+        const newImages = newColor.images || [];
+
+        const addedImages = newImages.filter((img) => !oldImages.includes(img));
+        const removedImages = oldImages.filter((img) => !newImages.includes(img));
+
+        addedImages.forEach((url) => {
+          historyDocs.push({
+            productId: product._id,
+            productName: name,
+            action: "image_added",
+            details: { color: newColor.color, imageUrl: url },
+            color: newColor.color,
+            worker: userId,
+          });
+        });
+
+        removedImages.forEach((url) => {
+          historyDocs.push({
+            productId: product._id,
+            productName: name,
+            action: "image_removed",
+            details: { color: newColor.color, imageUrl: url },
+            color: newColor.color,
+            worker: userId,
+          });
+        });
+      }
+    });
+
+    // Removed colors
+    oldData.colors.forEach((oldColor) => {
+      if (!processedColors.some((nc) => nc.color === oldColor.color)) {
+        historyDocs.push({
+          productId: product._id,
+          productName: name,
+          action: "color_removed",
+          details: {
+            color: oldColor.color,
+            sizesCount: oldColor.sizes.length,
+            imagesCount: oldColor.images?.length || 0,
+          },
+          color: oldColor.color,
+          worker: userId,
+        });
+      }
+    });
+
+    // ==================== SAVE HISTORY ====================
+    if (historyDocs.length > 0) {
+      console.log(`✅ Logging ${historyDocs.length} history entries for product ${product._id}`);
+      await ProductHistory.insertMany(historyDocs);
+    } else {
+      console.log("⚠️ No changes detected - nothing to log");
+    }
+
+    // ==================== SAVE PRODUCT ====================
+    await product.save();
+    await product.populate("category");
+
+    res.json({
+      success: true,
+      message: "تم تحديث المنتج بنجاح",
+      data: product,
+    });
+  } catch (error) {
+    console.error("Error updating product:", error);
+    res.status(500).json({
+      success: false,
+      message: "حدث خطأ أثناء تحديث المنتج",
+      data: null,
+    });
+  }
+};
+
+exports.deleteProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      return res.status(404).json({ success: false, message: "المنتج غير موجود" });
+    }
+
+    const userId = req.user?._id;
+
+    // Log deletion before deleting images/product
+    await ProductHistory.create({
+      productId: product._id,
+      productName: product.name,
+      action: "product_deleted",
+      details: {
+        colorsCount: product.colors.length,
+        totalStock: product.colors.reduce((sum, c) => 
+          sum + c.sizes.reduce((s, size) => s + size.quantity, 0), 0),
+      },
+      worker: userId,
+    });
+
+    // Delete images
+    const imageUrls = product.colors.flatMap((color) => color.images || []);
+    await Promise.all(imageUrls.map((url) => deleteFileByUrl(url)));
+
+    await product.deleteOne();
+
+    res.json({
+      success: true,
+      message: "تم حذف المنتج بنجاح",
+      data: null,
+    });
+  } catch (error) {
+    console.error("Error deleting product:", error);
+    res.status(500).json({ success: false, message: "حدث خطأ أثناء حذف المنتج" });
+  }
+};
+
 
 exports.updateSizeQuantity = async (req, res) => {
   try {
