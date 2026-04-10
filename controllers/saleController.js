@@ -4,6 +4,8 @@ const Order = require("../models/Order");
 const DailyProfit = require("../models/DailyProfit");
 const { updateProductStock } = require("../utils/productUtils");
 const BonusConfig = require("../models/BonusConfig");
+const BonusPeriod = require("../models/BonusPeriod");
+const User = require("../models/User");
 
 const generateUniqueBarcode = async () => {
   let barcode;
@@ -171,6 +173,46 @@ exports.createSale = async (req, res) => {
     );
 
     await sale.save();
+
+    // Bonus calculation and update
+    const config = await BonusConfig.findOne();
+
+    if (config && config.isEnabled) {
+      let period = await BonusPeriod.findOne({
+        user: cashier,
+        status: "pending",
+        endDate: null,
+      });
+
+      if (!period) {
+        period = await BonusPeriod.create({
+          user: cashier,
+          startDate: new Date(),
+          endDate: null,
+          status: "pending",
+          note: "تم إنشاؤها تلقائياً عند أول عملية بيع",
+          bonusAmount: 0,
+          adjustmentsTotal: 0,
+          finalBonus: 0,
+        });
+      }
+
+      const worker = await User.findById(cashier).select("bonusPercentage");
+
+      if (worker && worker.bonusPercentage > 0) {
+        const percentage = worker.bonusPercentage / 100;
+
+        const base = total - (discountAmount || 0);
+
+        const bonus = Math.trunc(base * percentage);
+
+        period.bonusAmount += bonus;
+
+        period.finalBonus = period.bonusAmount + (period.adjustmentsTotal || 0);
+
+        await period.save();
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -345,7 +387,7 @@ exports.exchangeProducts = async (req, res) => {
 
     sale.totalBeforeExchange = sale.total;
     sale.profitBeforeExchange = sale.profit;
-    sale.originalTotalBeforeExchange = sale.originalTotal
+    sale.originalTotalBeforeExchange = sale.originalTotal;
 
     // Recalculate current totals after exchange
     sale.total = sale.items.reduce(

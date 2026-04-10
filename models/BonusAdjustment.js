@@ -17,6 +17,11 @@ const BonusAdjustmentSchema = new mongoose.Schema(
       trim: true,
       required: true,
     },
+    type: {
+      type: String,
+      enum: ["bonus_only", "cash_deduction"],
+      required: true,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
