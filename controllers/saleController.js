@@ -252,11 +252,11 @@ exports.exchangeProducts = async (req, res) => {
     const saleTime = new Date(sale.createdAt);
     const hoursDiff = (now - saleTime) / (1000 * 60 * 60);
 
-    if (hoursDiff > 24) {
+    if (hoursDiff > 48) {
       return res.json({
         success: false,
         expired: true,
-        message: "انتهت فترة الـ 24 ساعة المسموح بها للاستبدال",
+        message: "انتهت فترة الـ 48 ساعة المسموح بها للاستبدال",
       });
     }
 
