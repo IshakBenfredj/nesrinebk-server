@@ -933,7 +933,7 @@ exports.getRevenueHistory = async (req, res) => {
       paidAt: { $lte: endOfDay },
     }).lean();
     const totalPaidBonusUpToDate = paidPeriodsUpToDate.reduce(
-      (s, p) => s + (p.finalBonus || p.bonusAmount || 0),
+      (s, p) => s + (p.finalBonus || 0),
       0
     );
 
@@ -1099,7 +1099,7 @@ exports.getRevenueHistory = async (req, res) => {
         changes.push({
           type: "bonus_payment",
           description: `دفع بونص — ${period.note ? period.note : "فترة بونص"}`,
-          amount: -bonusAmount,           // خروج نقدي
+          amount: +bonusAmount,           // خروج نقدي
           timestamp: period.paidAt,
           relatedId: period._id,
         });

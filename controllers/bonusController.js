@@ -94,7 +94,6 @@ exports.toggleBonus = async (req, res) => {
       isEnabled: config.isEnabled,
       message: "لم يتم تغيير حالة النظام",
     });
-
   } catch (err) {
     console.error("Toggle bonus error:", err);
     return res.status(500).json({
@@ -188,104 +187,104 @@ exports.getBonusStatus = async (req, res) => {
 //   }
 // };
 
-exports.getWorkerBonus = async (req, res) => {
-  try {
-    const { workerId } = req.params;
+// exports.getWorkerBonus = async (req, res) => {
+//   try {
+//     const { workerId } = req.params;
 
-    const worker = await User.findById(workerId);
-    if (!worker || worker.role !== "worker") {
-      return res.status(404).json({
-        success: false,
-        message: "العامل غير موجود",
-      });
-    }
+//     const worker = await User.findById(workerId);
+//     if (!worker || worker.role !== "worker") {
+//       return res.status(404).json({
+//         success: false,
+//         message: "العامل غير موجود",
+//       });
+//     }
 
-    const periods = await BonusPeriod.find({
-      user: workerId,
-      status: "pending",
-    });
+//     const periods = await BonusPeriod.find({
+//       user: workerId,
+//       status: "pending",
+//     });
 
-    const periodIds = periods.map((p) => p._id);
+//     const periodIds = periods.map((p) => p._id);
 
-    // 🔹 bonus_only adjustments
-    const bonusAdjustments = await BonusAdjustment.find({
-      period: { $in: periodIds },
-      type: "bonus_only",
-    }).lean();
+//     // 🔹 bonus_only adjustments
+//     const bonusAdjustments = await BonusAdjustment.find({
+//       period: { $in: periodIds },
+//       type: "bonus_only",
+//     }).lean();
 
-    // 🔹 cash_deduction adjustments
-    const cashAdjustments = await BonusAdjustment.find({
-      period: { $in: periodIds },
-      type: "cash_deduction",
-    }).lean();
+//     // 🔹 cash_deduction adjustments
+//     const cashAdjustments = await BonusAdjustment.find({
+//       period: { $in: periodIds },
+//       type: "cash_deduction",
+//     }).lean();
 
-    let totalUnpaidBonus = 0;
-    let totalCashWithdrawn = 0;
+//     let totalUnpaidBonus = 0;
+//     let totalCashWithdrawn = 0;
 
-    const resultPeriods = [];
+//     const resultPeriods = [];
 
-    for (const period of periods) {
-      // 🟢 البونص النهائي (جاهز)
-      const bonusValue = period.finalBonus || 0;
+//     for (const period of periods) {
+//       // 🟢 البونص النهائي (جاهز)
+//       const bonusValue = period.finalBonus || 0;
 
-      totalUnpaidBonus += bonusValue;
+//       totalUnpaidBonus += bonusValue;
 
-      // 🟠 cash deductions لهذا period
-      const periodCash = cashAdjustments
-        .filter((a) => a.period.toString() === period._id.toString())
-        .reduce((sum, a) => sum + Math.abs(a.amount), 0);
+//       // 🟠 cash deductions لهذا period
+//       const periodCash = cashAdjustments
+//         .filter((a) => a.period.toString() === period._id.toString())
+//         .reduce((sum, a) => sum + Math.abs(a.amount), 0);
 
-      totalCashWithdrawn += periodCash;
+//       totalCashWithdrawn += periodCash;
 
-      resultPeriods.push({
-        _id: period._id,
-        startDate: period.startDate,
-        endDate: period.endDate || "مفتوحة",
-        status: period.status,
+//       resultPeriods.push({
+//         _id: period._id,
+//         startDate: period.startDate,
+//         endDate: period.endDate || "مفتوحة",
+//         status: period.status,
 
-        // 🟢 البونص
-        totalBonus: bonusValue,
+//         // 🟢 البونص
+//         totalBonus: bonusValue,
 
-        details: {
-          salesBonus: period.bonusAmount || 0,
-          bonusAdjustments: period.adjustmentsTotal || 0,
-          cashWithdrawn: periodCash,
-        },
-      });
-    }
+//         details: {
+//           salesBonus: period.bonusAmount || 0,
+//           bonusAdjustments: period.adjustmentsTotal || 0,
+//           cashWithdrawn: periodCash,
+//         },
+//       });
+//     }
 
-    // 🔥 المبلغ المتبقي للسحب من الكاش
-    const remainingToDeduct = Math.max(
-      0,
-      totalCashWithdrawn - totalUnpaidBonus,
-    );
+//     // 🔥 المبلغ المتبقي للسحب من الكاش
+//     const remainingToDeduct = Math.max(
+//       0,
+//       totalCashWithdrawn - totalUnpaidBonus,
+//     );
 
-    return res.json({
-      success: true,
-      worker: {
-        _id: worker._id,
-        name: worker.name,
-        phone: worker.phone,
-        bonusPercentage: worker.bonusPercentage || 0,
-      },
+//     return res.json({
+//       success: true,
+//       worker: {
+//         _id: worker._id,
+//         name: worker.name,
+//         phone: worker.phone,
+//         bonusPercentage: worker.bonusPercentage || 0,
+//       },
 
-      unpaidPeriods: resultPeriods,
+//       unpaidPeriods: resultPeriods,
 
-      totalUnpaidBonus,
+//       totalUnpaidBonus,
 
-      totalCashWithdrawn,
+//       totalCashWithdrawn,
 
-      remainingToDeduct,
-    });
+//       remainingToDeduct,
+//     });
 
-  } catch (err) {
-    console.error("Get worker bonus error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "حدث خطأ في جلب بيانات البونص لهذا العامل",
-    });
-  }
-};
+//   } catch (err) {
+//     console.error("Get worker bonus error:", err);
+//     return res.status(500).json({
+//       success: false,
+//       message: "حدث خطأ في جلب بيانات البونص لهذا العامل",
+//     });
+//   }
+// };
 
 // exports.payWorkerBonus = async (req, res) => {
 //   try {
@@ -351,10 +350,94 @@ exports.getWorkerBonus = async (req, res) => {
 //   }
 // };
 
+exports.getWorkerBonus = async (req, res) => {
+  try {
+    const { workerId } = req.params;
+
+    const worker = await User.findById(workerId);
+    if (!worker || worker.role !== "worker") {
+      return res.status(404).json({
+        success: false,
+        message: "العامل غير موجود",
+      });
+    }
+
+    // Find the single pending period
+    const period = await BonusPeriod.findOne({
+      user: workerId,
+      status: "pending",
+    }).lean();
+
+    if (!period) {
+      return res.json({
+        success: true,
+        worker: {
+          _id: worker._id,
+          name: worker.name,
+          phone: worker.phone,
+          bonusPercentage: worker.bonusPercentage || 0,
+        },
+        unpaidPeriods: [],
+        adjustments: [],
+        totalUnpaidBonus: 0,
+        totalCashWithdrawn: 0,
+      });
+    }
+
+    // Get ALL adjustments for this period
+    const allAdjustments = await BonusAdjustment.find({
+      period: period._id,
+    })
+      .populate("createdBy", "name")
+      .lean();
+
+    console.log("All adjustments for period:", allAdjustments);
+
+    const bonusValue = period.finalBonus || 0;
+
+    const periodCash = allAdjustments
+      .filter((a) => a.type === "cash_deduction")
+      .reduce((sum, a) => sum + Math.abs(a.amount), 0);
+
+    const resultPeriod = {
+      _id: period._id,
+      startDate: period.startDate,
+      endDate: period.endDate || "مفتوحة",
+      status: period.status,
+      totalBonus: bonusValue,
+      details: {
+        salesBonus: period.bonusAmount || 0,
+        bonusAdjustments: period.adjustmentsTotal || 0,
+        cashWithdrawn: periodCash,
+      },
+    };
+
+    return res.json({
+      success: true,
+      worker: {
+        _id: worker._id,
+        name: worker.name,
+        phone: worker.phone,
+        bonusPercentage: worker.bonusPercentage || 0,
+      },
+      unpaidPeriods: [resultPeriod], // always one pending period
+      adjustments: allAdjustments, // all adjustments for this period
+      totalUnpaidBonus: bonusValue,
+      totalCashWithdrawn: periodCash,
+    });
+  } catch (err) {
+    console.error("Get worker bonus error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "حدث خطأ في جلب بيانات البونص",
+    });
+  }
+};
+
 exports.payWorkerBonus = async (req, res) => {
   try {
     const { workerId } = req.params;
-    const { amount } = req.body; 
+    const { amount } = req.body;
 
     const worker = await User.findById(workerId);
     if (!worker || worker.role !== "worker") {
@@ -400,7 +483,7 @@ exports.payWorkerBonus = async (req, res) => {
           endDate: now,
           note: "دفع يدوي من قبل الإدارة",
         },
-      }
+      },
     );
 
     // Check BonusConfig for auto new period
@@ -484,10 +567,10 @@ exports.createAdjustment = async (req, res) => {
 
     if (type === "bonus_only") {
       period.adjustmentsTotal += Number(amount);
-      period.finalBonus = period.bonusAmount + period.adjustmentsTotal;
+      period.finalBonus += Number(amount);
       await period.save();
     } else if (type === "cash_deduction") {
-      period.finalBonus += Number(amount); 
+      period.finalBonus += Number(amount);
       await period.save();
     }
     return res.status(201).json({
@@ -551,7 +634,10 @@ exports.deleteAdjustment = async (req, res) => {
 
     if (adjustment.type === "bonus_only") {
       period.adjustmentsTotal -= adjustment.amount;
-      period.finalBonus = period.bonusAmount + period.adjustmentsTotal;
+      period.finalBonus -= adjustment.amount
+      await period.save();
+    } else if (adjustment.type === "cash_deduction") {
+      period.finalBonus -= adjustment.amount
       await period.save();
     }
 
