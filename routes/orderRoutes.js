@@ -8,6 +8,7 @@ router.get("/", protect, orderController.getOrders);
 router.get("/:id", protect, orderController.getOrderById);
 router.put("/:id", protect, orderController.updateOrder);
 router.put("/:id/status", protect, orderController.updateOrderStatus);
+router.post("/:id/exchange", protect, orderController.exchangeOrder);
 router.delete("/:id", protect, orderController.deleteOrder);
 
 module.exports = router;

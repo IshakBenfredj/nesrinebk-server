@@ -18,6 +18,12 @@ exports.createProduct = async (req, res) => {
     } = req.body;
 
     const userId = req.user?._id; // worker ID from auth middleware
+    if (req.user.role === "worker") {
+      return res.status(403).json({
+        success: false,
+        message: "غير مصرح للعاملات بإنشاء المنتجات",
+      });
+    }
 
     if (
       !name ||
@@ -139,6 +145,7 @@ exports.getProducts = async (req, res) => {
     const products = await Product.find(query)
       // Updated: Populate categories (plural)
       .populate("category", "name")
+      .select(req.user.role === "worker" ? "-originalPrice" : "")
       .sort({ createdAt: -1 });
 
     res.json({
@@ -157,11 +164,13 @@ exports.getProducts = async (req, res) => {
 
 exports.getProductById = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id).populate(
-      // Updated: Populate categories (plural)
-      "category",
-      "name",
-    );
+    const product = await Product.findById(req.params.id)
+      .populate(
+        // Updated: Populate categories (plural)
+        "category",
+        "name",
+      )
+      .select(req.user.role === "worker" ? "-originalPrice" : "");
     if (!product) {
       return res.status(404).json({
         success: false,
@@ -624,6 +633,13 @@ exports.updateProduct = async (req, res) => {
     const { name, price, category, colors, fabric, originalPrice } = req.body;
     const userId = req.user?._id;
 
+    if (req.user.role === "worker") {
+      return res.status(403).json({
+        success: false,
+        message: "غير مصرح للعاملات بتعديل المنتجات",
+      });
+    }
+
     // Basic validation
     if (
       !name ||
@@ -904,6 +920,12 @@ exports.updateProduct = async (req, res) => {
 
 exports.deleteProduct = async (req, res) => {
   try {
+    if (req.user.role === "worker") {
+      return res.status(403).json({
+        success: false,
+        message: "غير مصرح للعاملات بحذف المنتجات",
+      });
+    }
     const product = await Product.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ success: false, message: "المنتج غير موجود" });

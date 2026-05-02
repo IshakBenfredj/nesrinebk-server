@@ -33,6 +33,32 @@ const OrderItemSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const ExchangeItemSchema = new mongoose.Schema(
+  {
+    originalItem: {
+      type: OrderItemSchema,
+      required: true,
+    },
+    exchangedWith: {
+      type: OrderItemSchema,
+      required: true,
+    },
+    exchangedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    priceDifference: {
+      type: Number,
+      required: true,
+    },
+    profitDifference: {
+      type: Number,
+      required: true,
+    },
+  },
+  { _id: false },
+);
+
 const OrderSchema = new mongoose.Schema(
   {
     fullName: { type: String, required: true },
@@ -89,6 +115,33 @@ const OrderSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+    },
+    handedToShipping: {
+      type: Boolean,
+      default: false,
+    },
+    isExchanged: {
+      type: Boolean,
+      default: false,
+    },
+    exchangedAt: {
+      type: Date,
+    },
+    totalBeforeExchange: {
+      type: Number,
+      default: 0,
+    },
+    profitBeforeExchange: {
+      type: Number,
+      default: 0,
+    },
+    exchangeCashier: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    exchanges: {
+      type: [ExchangeItemSchema],
+      default: [],
     },
     statusUpdatedAt: {
       type: Date,

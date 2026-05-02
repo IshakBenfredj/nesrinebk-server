@@ -161,10 +161,41 @@ async function computeOrdersForPeriod(dateMatches, filterQuery) {
   let profitOrders = 0;
 
   orders.forEach((order) => {
-    const d = new Date(order.statusUpdatedAt);
-    if (!dateMatches(d)) return;
-    totalOrders += order.total - (order.discountAmount || 0);
-    profitOrders += order.profit - (order.discountAmount || 0);
+    const updatedAt = new Date(order.statusUpdatedAt);
+    const exchangedAt = order.exchangedAt ? new Date(order.exchangedAt) : null;
+    const isExchanged = order.isExchanged;
+    const discount = order.discountAmount || 0;
+
+    if (!isExchanged) {
+      if (dateMatches(updatedAt)) {
+        totalOrders += order.total - discount;
+        profitOrders += order.profit - discount;
+      }
+    } else {
+      // Original values on delivery day (statusUpdatedAt)
+      if (dateMatches(updatedAt)) {
+        totalOrders += (order.totalBeforeExchange || order.total) - discount;
+        profitOrders += (order.profitBeforeExchange || order.profit) - discount;
+      }
+      // Individual exchange differences on their respective days
+      if (order.exchanges && order.exchanges.length > 0) {
+        order.exchanges.forEach((ex) => {
+          const exAt = new Date(ex.exchangedAt);
+          if (dateMatches(exAt)) {
+            totalOrders += ex.priceDifference;
+            profitOrders += ex.profitDifference || 0;
+          }
+        });
+      } else if (exchangedAt && dateMatches(exchangedAt)) {
+        // Fallback for orders without exchanges array
+        const priceDiff =
+          order.total - (order.totalBeforeExchange || order.total);
+        const profitDiff =
+          order.profit - (order.profitBeforeExchange || order.profit);
+        totalOrders += priceDiff;
+        profitOrders += profitDiff;
+      }
+    }
   });
 
   return { totalOrders, profitOrders };

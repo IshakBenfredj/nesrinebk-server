@@ -34,7 +34,11 @@ exports.addExpense = async (req, res) => {
 // ➤ Get All Expenses
 exports.getExpenses = async (req, res) => {
   try {
-    const expenses = await Expense.find().populate("user");
+    const query = {};
+    if (req.user.role === "worker") {
+      query.admin = false;
+    }
+    const expenses = await Expense.find(query).populate("user");
     res.json({ success: true, data: expenses });
   } catch (err) {
     res.status(500).json({

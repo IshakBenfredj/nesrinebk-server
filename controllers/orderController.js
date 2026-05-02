@@ -162,6 +162,7 @@ exports.createOrder = async (req, res) => {
       discountAmount = 0,
       accountName,
       source,
+      handedToShipping = false,
     } = req.body;
 
     if (!items || items.length === 0) {
@@ -294,6 +295,7 @@ exports.createOrder = async (req, res) => {
       source,
       createdBy: req.user._id,
       accountName,
+      handedToShipping,
     });
 
     // Update stock in DB if needed
@@ -321,7 +323,7 @@ exports.createOrder = async (req, res) => {
 exports.updateOrderStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, handedToShipping } = req.body;
 
     const order = await Order.findById(id);
     if (!order)
@@ -330,8 +332,13 @@ exports.updateOrderStatus = async (req, res) => {
         .json({ success: false, message: "الطلبية غير موجودة" });
 
     const oldStatus = order.status;
-    order.status = status;
-    order.statusUpdatedAt = new Date();
+    if (status !== undefined) {
+      order.status = status;
+      order.statusUpdatedAt = new Date();
+    }
+    if (handedToShipping !== undefined) {
+      order.handedToShipping = handedToShipping;
+    }
     await order.save();
 
     const shouldDecreaseNew = status !== "غير مؤكدة" && status !== "ارجاع";
@@ -390,7 +397,8 @@ exports.updateOrder = async (req, res) => {
       profit,
       discountAmount = 0,
       source,
-      accountName
+      accountName,
+      handedToShipping
     } = req.body;
 
     const order = await Order.findById(id);
@@ -527,7 +535,8 @@ exports.updateOrder = async (req, res) => {
         isPaid,
         source,
         status,
-        accountName
+        accountName,
+        handedToShipping
       },
       { new: true, runValidators: true },
     );
@@ -601,7 +610,7 @@ exports.getOrders = async (req, res) => {
     let ordersQuery = Order.find(query)
       .sort({ createdAt: -1 })
       .populate("createdBy", "name")
-      .populate("items.product", "name")
+      .populate("items.product", req.user.role === "worker" ? "name" : "name originalPrice")
       .lean();
 
     let pagination = null;
@@ -676,7 +685,7 @@ exports.getOrderById = async (req, res) => {
 
     const order = await Order.findById(id)
       .populate("createdBy", "name")
-      .populate("items.product", "name originalPrice");
+      .populate("items.product", req.user.role === "worker" ? "name" : "name originalPrice");
 
     if (!order) {
       return res
@@ -690,5 +699,183 @@ exports.getOrderById = async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "حدث خطأ أثناء جلب الطلبية" });
+  }
+};
+
+exports.exchangeOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { exchanges } = req.body;
+    const userRole = req.user.role;
+
+    if (!exchanges || !Array.isArray(exchanges) || exchanges.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "لا توجد عناصر للاستبدال",
+      });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "الطلبية غير موجودة",
+      });
+    }
+
+    if (order.status !== "تم الاستلام") {
+      return res.status(400).json({
+        success: false,
+        message: "يمكن استبدال الطلبيات المستلمة فقط",
+      });
+    }
+
+    // Save pre-exchange values if this is the first exchange
+    if (!order.isExchanged) {
+      order.totalBeforeExchange = order.total;
+      order.profitBeforeExchange = order.profit;
+    }
+
+    const stockUpdates = [];
+    const exchangeRecords = [];
+    const now = new Date();
+    const cashier = req.user._id;
+
+    for (const exchange of exchanges) {
+      const { originalBarcode, newBarcode, newQuantity } = exchange;
+
+      if (newQuantity < 1) {
+        return res.status(400).json({
+          success: false,
+          message: `الكمية يجب أن تكون أكبر من الصفر للباركود: ${newBarcode}`,
+        });
+      }
+
+      const originalItem = order.items.find(
+        (item) => item.barcode === originalBarcode
+      );
+      if (!originalItem) {
+        return res.status(404).json({
+          success: false,
+          message: `المنتج الأصلي غير موجود في الطلبية: ${originalBarcode}`,
+        });
+      }
+
+      const newProduct = await Product.findOne({
+        "colors.sizes.barcode": newBarcode,
+      });
+      if (!newProduct) {
+        return res.status(404).json({
+          success: false,
+          message: `المنتج الجديد غير موجود: ${newBarcode}`,
+        });
+      }
+
+      let newSize = null;
+      let newColor = null;
+
+      for (const color of newProduct.colors) {
+        for (const size of color.sizes) {
+          if (size.barcode === newBarcode) {
+            newSize = size;
+            newColor = color;
+            break;
+          }
+        }
+        if (newSize) break;
+      }
+
+      if (!newSize || !newColor) {
+        return res.status(404).json({
+          success: false,
+          message: `لم يتم العثور على المقاس أو اللون للباركود: ${newBarcode}`,
+        });
+      }
+
+      if (newSize.quantity < newQuantity) {
+        return res.status(400).json({
+          success: false,
+          message: `الكمية غير متوفرة للمنتج: ${newProduct.name} (${newSize.size}) - يتوفر ${newSize.quantity}`,
+        });
+      }
+
+      const exchangedItem = {
+        product: newProduct._id,
+        barcode: newBarcode,
+        quantity: newQuantity,
+        price: newProduct.price,
+        size: newSize.size,
+        color: newColor.color,
+      };
+
+      const originalAmount = originalItem.quantity * originalItem.price;
+      const newAmount = newQuantity * newProduct.price;
+      const priceDifference = newAmount - originalAmount;
+
+      const originalCost = originalItem.quantity * (originalItem.originalPrice || 0);
+      const newCost = newQuantity * (newProduct.originalPrice || 0);
+      const profitDifference = (newAmount - newCost) - (originalAmount - originalCost);
+
+      // Return original to stock
+      stockUpdates.push(
+        updateProductStock(
+          originalItem.product,
+          originalItem.barcode,
+          originalItem.quantity,
+          false
+        )
+      );
+      // Deduct new from stock
+      stockUpdates.push(
+        updateProductStock(newProduct._id, newBarcode, -newQuantity, false)
+      );
+
+      // Save exchange record
+      exchangeRecords.push({
+        originalItem: { ...originalItem.toObject() },
+        exchangedWith: exchangedItem,
+        exchangedAt: now,
+        priceDifference, profitDifference,
+      });
+
+      // Update order items list
+      order.items = order.items.map((item) =>
+        item.barcode === originalBarcode ? exchangedItem : item
+      );
+    }
+
+    await Promise.all(stockUpdates);
+
+    // Recalculate totals
+    let newTotal = 0;
+    let newOriginalTotal = 0;
+
+    for (const item of order.items) {
+      const prod = await Product.findById(item.product);
+      newTotal += item.quantity * item.price;
+      newOriginalTotal += item.quantity * (prod.originalPrice || 0);
+    }
+
+    order.total = newTotal;
+    order.originalTotal = newOriginalTotal;
+    order.profit = newTotal - newOriginalTotal;
+
+    order.isExchanged = true;
+    order.exchangedAt = now;
+    order.exchangeCashier = cashier;
+    order.exchanges.push(...exchangeRecords);
+
+    await order.save();
+
+    res.json({
+      success: true,
+      data: order,
+    });
+  } catch (error) {
+    console.error("Error exchanging order products:", error);
+    res.status(500).json({
+      success: false,
+      message: "حدث خطأ أثناء عملية الاستبدال",
+    });
   }
 };
