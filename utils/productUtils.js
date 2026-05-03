@@ -39,7 +39,7 @@ exports.updateProductStock = async (
     };
 
     if (incrementSoldCount) {
-      updateData.$inc = { soldCount: quantity };
+      updateData.$inc = { soldCount: Math.abs(quantity) };
     }
 
     await Product.findByIdAndUpdate(productId, updateData);

@@ -48,7 +48,14 @@ exports.createSale = async (req, res) => {
       });
     }
 
-    // التحقق من القيم المالية (أمان إضافي)
+    console.log("--- createSale Debug ---");
+    console.log("originalTotal:", originalTotal, typeof originalTotal);
+    console.log("total:", total, typeof total);
+    console.log("profit:", profit, typeof profit);
+    console.log("discountAmount:", discountAmount, typeof discountAmount);
+    console.log("is discountAmount > originalTotal?", discountAmount > originalTotal);
+    console.log("------------------------");
+
     if (
       typeof originalTotal !== "number" ||
       typeof total !== "number" ||
@@ -57,6 +64,14 @@ exports.createSale = async (req, res) => {
       total < 0 ||
       profit < 0
     ) {
+      console.log("❌ Financial validation failed:");
+      if (typeof originalTotal !== "number") console.log("- originalTotal is not a number");
+      if (typeof total !== "number") console.log("- total is not a number");
+      if (typeof profit !== "number") console.log("- profit is not a number");
+      if (originalTotal < 0) console.log("- originalTotal < 0");
+      if (total < 0) console.log("- total < 0");
+      if (profit < 0) console.log("- profit < 0");
+
       return res.status(400).json({
         success: false,
         message: "البيانات المالية غير صالحة",
@@ -165,7 +180,7 @@ exports.createSale = async (req, res) => {
       prepaidAmount,
     });
 
-    // Update stock
+    // Update stock (Fix: quantity should be positive for soldCount increment)
     await Promise.all(
       saleItems.map((item) =>
         updateProductStock(item.product, item.barcode, -item.quantity, true),
@@ -174,7 +189,6 @@ exports.createSale = async (req, res) => {
 
     await sale.save();
 
-    // Bonus calculation and update
     const config = await BonusConfig.findOne();
 
     if (config && config.isEnabled) {

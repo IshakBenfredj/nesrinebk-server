@@ -1,5 +1,5 @@
-const cron = require('cron')
-const https = require('https')
+const cron = require("cron");
+const https = require("https");
 
 const job = new cron.CronJob("*/14 * * * *", function () {
   https
@@ -10,4 +10,4 @@ const job = new cron.CronJob("*/14 * * * *", function () {
     .on("error", (e) => console.error("Error while sending request", e));
 });
 
-module.exports = job
+module.exports = job;

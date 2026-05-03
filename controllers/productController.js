@@ -17,7 +17,7 @@ exports.createProduct = async (req, res) => {
       originalPrice,
     } = req.body;
 
-    const userId = req.user?._id; // worker ID from auth middleware
+    const userId = req.user?._id;
     if (req.user.role === "worker") {
       return res.status(403).json({
         success: false,
@@ -131,8 +131,7 @@ exports.getProducts = async (req, res) => {
     const query = {};
 
     if (category) {
-      // Updated: If category is provided, use $in operator since categories are now an array
-      query.category = { $in: [category] }; // Assuming category is a single ID; adjust if multiple
+      query.category = { $in: [category] };
     }
     if (color) query["colors.color"] = color;
     if (search) query.$text = { $search: search };
@@ -143,9 +142,7 @@ exports.getProducts = async (req, res) => {
     }
 
     const products = await Product.find(query)
-      // Updated: Populate categories (plural)
       .populate("category", "name")
-      .select(req.user.role === "worker" ? "-originalPrice" : "")
       .sort({ createdAt: -1 });
 
     res.json({
@@ -661,7 +658,9 @@ exports.updateProduct = async (req, res) => {
 
     const product = await Product.findById(id);
     if (!product) {
-      return res.status(404).json({ success: false, message: "المنتج غير موجود" });
+      return res
+        .status(404)
+        .json({ success: false, message: "المنتج غير موجود" });
     }
 
     // ==================== TAKE OLD SNAPSHOT ====================
@@ -679,19 +678,26 @@ exports.updateProduct = async (req, res) => {
     // ==================== PROCESS COLORS & IMAGES ====================
     const processedColors = await Promise.all(
       colors.map(async (color) => {
-        const existingColor = product.colors.find((c) => c.color === color.color);
+        const existingColor = product.colors.find(
+          (c) => c.color === color.color,
+        );
 
-        const base64Images = (color.images || []).filter((img) => img.startsWith("data:"));
-        const retainedImages = (color.images || []).filter((img) => !img.startsWith("data:"));
+        const base64Images = (color.images || []).filter((img) =>
+          img.startsWith("data:"),
+        );
+        const retainedImages = (color.images || []).filter(
+          (img) => !img.startsWith("data:"),
+        );
 
-        const newUploadedImages = base64Images.length > 0
-          ? await uploadMultipleImages(base64Images)
-          : [];
+        const newUploadedImages =
+          base64Images.length > 0
+            ? await uploadMultipleImages(base64Images)
+            : [];
 
         // Delete removed images
         const previousImages = existingColor?.images || [];
         const removedImages = previousImages.filter(
-          (img) => !retainedImages.includes(img) && !isCloudinaryUrl(img)
+          (img) => !retainedImages.includes(img) && !isCloudinaryUrl(img),
         );
         await Promise.all(removedImages.map((img) => deleteFileByUrl(img)));
 
@@ -699,14 +705,16 @@ exports.updateProduct = async (req, res) => {
           ...color,
           images: [...retainedImages, ...newUploadedImages],
           sizes: color.sizes.map((size) => {
-            const existingSize = existingColor?.sizes?.find((s) => s.size === size.size);
+            const existingSize = existingColor?.sizes?.find(
+              (s) => s.size === size.size,
+            );
             return {
               ...size,
               barcode: existingSize?.barcode || generateBarcode(),
             };
           }),
         };
-      })
+      }),
     );
 
     // ==================== APPLY CHANGES ====================
@@ -746,7 +754,11 @@ exports.updateProduct = async (req, res) => {
         productId: product._id,
         productName: name,
         action: "product_updated",
-        details: { field: "originalPrice", old: oldData.originalPrice, new: originalPrice },
+        details: {
+          field: "originalPrice",
+          old: oldData.originalPrice,
+          new: originalPrice,
+        },
         worker: userId,
       });
     }
@@ -847,7 +859,9 @@ exports.updateProduct = async (req, res) => {
         const newImages = newColor.images || [];
 
         const addedImages = newImages.filter((img) => !oldImages.includes(img));
-        const removedImages = oldImages.filter((img) => !newImages.includes(img));
+        const removedImages = oldImages.filter(
+          (img) => !newImages.includes(img),
+        );
 
         addedImages.forEach((url) => {
           historyDocs.push({
@@ -893,7 +907,9 @@ exports.updateProduct = async (req, res) => {
 
     // ==================== SAVE HISTORY ====================
     if (historyDocs.length > 0) {
-      console.log(`✅ Logging ${historyDocs.length} history entries for product ${product._id}`);
+      console.log(
+        `✅ Logging ${historyDocs.length} history entries for product ${product._id}`,
+      );
       await ProductHistory.insertMany(historyDocs);
     } else {
       console.log("⚠️ No changes detected - nothing to log");
@@ -928,7 +944,9 @@ exports.deleteProduct = async (req, res) => {
     }
     const product = await Product.findById(req.params.id);
     if (!product) {
-      return res.status(404).json({ success: false, message: "المنتج غير موجود" });
+      return res
+        .status(404)
+        .json({ success: false, message: "المنتج غير موجود" });
     }
 
     const userId = req.user?._id;
@@ -940,8 +958,10 @@ exports.deleteProduct = async (req, res) => {
       action: "product_deleted",
       details: {
         colorsCount: product.colors.length,
-        totalStock: product.colors.reduce((sum, c) => 
-          sum + c.sizes.reduce((s, size) => s + size.quantity, 0), 0),
+        totalStock: product.colors.reduce(
+          (sum, c) => sum + c.sizes.reduce((s, size) => s + size.quantity, 0),
+          0,
+        ),
       },
       worker: userId,
     });
@@ -959,10 +979,11 @@ exports.deleteProduct = async (req, res) => {
     });
   } catch (error) {
     console.error("Error deleting product:", error);
-    res.status(500).json({ success: false, message: "حدث خطأ أثناء حذف المنتج" });
+    res
+      .status(500)
+      .json({ success: false, message: "حدث خطأ أثناء حذف المنتج" });
   }
 };
-
 
 exports.updateSizeQuantity = async (req, res) => {
   try {
