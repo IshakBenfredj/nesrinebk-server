@@ -134,6 +134,11 @@ const SaleSchema = new mongoose.Schema(
       min: 0,
       default: 0,
     },
+    bonusAmount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
     isPrePaid: {
       type: Boolean,
       default: false,

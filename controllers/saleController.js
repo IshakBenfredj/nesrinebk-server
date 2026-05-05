@@ -180,15 +180,6 @@ exports.createSale = async (req, res) => {
       prepaidAmount,
     });
 
-    // Update stock (Fix: quantity should be positive for soldCount increment)
-    await Promise.all(
-      saleItems.map((item) =>
-        updateProductStock(item.product, item.barcode, -item.quantity, true),
-      ),
-    );
-
-    await sale.save();
-
     const config = await BonusConfig.findOne();
 
     if (config && config.isEnabled) {
@@ -215,18 +206,28 @@ exports.createSale = async (req, res) => {
 
       if (worker && worker.bonusPercentage > 0) {
         const percentage = worker.bonusPercentage / 100;
-
         const base = total - (discountAmount || 0);
-
         const bonus = Math.trunc(base * percentage);
 
-        period.bonusAmount += bonus;
+        // Store bonus details in the sale
+        sale.bonusPercentageApplied = worker.bonusPercentage;
+        sale.bonusAmount = bonus;
 
+        period.bonusAmount += bonus;
         period.finalBonus = period.bonusAmount + (period.adjustmentsTotal || 0);
 
         await period.save();
       }
     }
+
+    // Update stock (Fix: quantity should be positive for soldCount increment)
+    await Promise.all(
+      saleItems.map((item) =>
+        updateProductStock(item.product, item.barcode, -item.quantity, true),
+      ),
+    );
+
+    await sale.save();
 
     return res.status(201).json({
       success: true,
@@ -876,6 +877,40 @@ exports.exchangeProducts = async (req, res) => {
       0,
     );
     sale.profit = sale.total - sale.originalTotal;
+
+    // Adjust bonus if totals changed after exchange
+    const oldBonusAmount = sale.bonusAmount || 0;
+    let percentage = sale.bonusPercentageApplied;
+
+    if (percentage === undefined || percentage === null) {
+      const worker = await User.findById(sale.cashier).select("bonusPercentage");
+      percentage = worker ? worker.bonusPercentage : 0;
+      sale.bonusPercentageApplied = percentage;
+    }
+
+    if (percentage > 0) {
+      const base = sale.total - (sale.discountAmount || 0);
+      const newBonusAmount = Math.trunc(base * (percentage / 100));
+      const diff = newBonusAmount - oldBonusAmount;
+
+      if (diff !== 0) {
+        const period = await BonusPeriod.findOne({
+          user: sale.cashier,
+          status: "pending",
+          endDate: null,
+        });
+
+        if (period) {
+          period.bonusAmount += diff;
+          if (period.bonusAmount < 0) period.bonusAmount = 0;
+          period.finalBonus = period.bonusAmount + (period.adjustmentsTotal || 0);
+          await period.save();
+          
+          sale.bonusAmount = newBonusAmount;
+        }
+      }
+    }
+
     sale.isExchanged = true;
     sale.exchanges.push(...exchangeRecords);
     sale.exchangeCashier = cashier;
@@ -1050,6 +1085,40 @@ exports.updateSale = async (req, res) => {
     sale.profit =
       sale.total - (sale.discountAmount || 0) - sale.originalTotal;
 
+    // Adjust bonus if totals changed
+    const oldBonusAmount = sale.bonusAmount || 0;
+    let percentage = sale.bonusPercentageApplied;
+
+    // If percentage is not stored (old sale), try to get it from the user
+    if (percentage === undefined || percentage === null) {
+      const worker = await User.findById(sale.cashier).select("bonusPercentage");
+      percentage = worker ? worker.bonusPercentage : 0;
+      sale.bonusPercentageApplied = percentage;
+    }
+
+    if (percentage > 0) {
+      const base = sale.total - (sale.discountAmount || 0);
+      const newBonusAmount = Math.trunc(base * (percentage / 100));
+      const diff = newBonusAmount - oldBonusAmount;
+
+      if (diff !== 0) {
+        const period = await BonusPeriod.findOne({
+          user: sale.cashier,
+          status: "pending",
+          endDate: null,
+        });
+
+        if (period) {
+          period.bonusAmount += diff;
+          if (period.bonusAmount < 0) period.bonusAmount = 0;
+          period.finalBonus = period.bonusAmount + (period.adjustmentsTotal || 0);
+          await period.save();
+          
+          sale.bonusAmount = newBonusAmount;
+        }
+      }
+    }
+
     await sale.save();
 
     res.json({
@@ -1085,12 +1154,30 @@ exports.deleteSale = async (req, res) => {
 
     await Promise.all(stockUpdates);
 
+    // Subtract bonus from worker's pending period if applicable
+    if (sale.bonusAmount > 0) {
+      const period = await BonusPeriod.findOne({
+        user: sale.cashier,
+        status: "pending",
+        endDate: null,
+      });
+
+      if (period) {
+        period.bonusAmount -= sale.bonusAmount;
+        // Ensure bonusAmount doesn't go below 0 (optional, but safer)
+        if (period.bonusAmount < 0) period.bonusAmount = 0;
+        
+        period.finalBonus = period.bonusAmount + (period.adjustmentsTotal || 0);
+        await period.save();
+      }
+    }
+
     // Delete the sale
     await Sale.findByIdAndDelete(id);
 
     res.json({
       success: true,
-      message: "تم حذف الفاتورة بنجاح وإرجاع المنتجات للمخزن",
+      message: "تم حذف الفاتورة بنجاح وإرجاع المنتجات للمخزن وتعديل البونص",
     });
   } catch (error) {
     console.error("Error deleting sale:", error);
