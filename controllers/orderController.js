@@ -7,143 +7,6 @@ async function getNextOrderNumber() {
   return lastOrder ? lastOrder.orderNumber + 1 : 1;
 }
 
-// exports.createOrder = async (req, res) => {
-//   try {
-//     const {
-//       fullName,
-//       phone,
-//       state,
-//       deliveryType,
-//       address,
-//       items,
-//       notes,
-//       isPaid,
-//       status,
-//     } = req.body;
-
-//     if (!items || items.length === 0) {
-//       return res
-//         .status(400)
-//         .json({ success: false, message: "محتوى الطلبية فارغ" });
-//     }
-
-//     if (!deliveryType || !["مكتب", "منزل"].includes(deliveryType)) {
-//       return res
-//         .status(400)
-//         .json({ success: false, message: "نوع التوصيل غير صالح" });
-//     }
-
-//     if (deliveryType === "منزل" && (!address || address.trim() === "")) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "العنوان مطلوب في حالة التوصيل للمنزل",
-//       });
-//     }
-
-//     let totalPrice = 0;
-//     const shouldDecreaseStock = status !== "غير مؤكدة" && status !== "ارجاع";
-
-//     for (const item of items) {
-//       const product = await Product.findById(item.product);
-//       if (!product) {
-//         return res
-//           .status(404)
-//           .json({ success: false, message: "المنتج غير موجود" });
-//       }
-
-//       let foundSize = null;
-//       for (const color of product.colors) {
-//         for (const size of color.sizes) {
-//           if (size.barcode === item.barcode) {
-//             foundSize = size;
-//             break;
-//           }
-//         }
-//       }
-
-//       if (!foundSize) {
-//         return res.status(400).json({
-//           success: false,
-//           message: `الباركود ${item.barcode} غير موجود`,
-//         });
-//       }
-
-//       // ✅ تحقق من الكمية المتاحة بناءً على الطلبات المحجوزة
-//       const reservedOrders = await Order.aggregate([
-//         {
-//           $match: {
-//             status: { $in: ["غير مؤكدة", "مؤكدة"] },
-//             "items.barcode": item.barcode,
-//           },
-//         },
-//         { $unwind: "$items" },
-//         { $match: { "items.barcode": item.barcode } },
-//         {
-//           $group: {
-//             _id: "$items.barcode",
-//             reservedQty: { $sum: "$items.quantity" },
-//           },
-//         },
-//       ]);
-
-//       const reservedQty =
-//         reservedOrders.length > 0 ? reservedOrders[0].reservedQty : 0;
-//       const availableQty = foundSize.quantity - reservedQty;
-
-//       if (item.quantity > availableQty) {
-//         return res.status(400).json({
-//           success: false,
-//           message: `الكمية غير متوفرة للمنتج ${product.name}. المتبقي ${availableQty} بعد حجز الطلبات.`,
-//         });
-//       }
-
-//       totalPrice += item.quantity * item.price;
-
-//       // ✅ إنقاص الكمية فقط إذا كانت الحالة ليست (غير مؤكدة / ارجاع)
-//       if (shouldDecreaseStock) {
-//         foundSize.quantity = Math.max(foundSize.quantity - item.quantity, 0);
-//       }
-//     }
-
-//     const orderNumber = await getNextOrderNumber();
-
-//     const newOrder = await Order.create({
-//       fullName,
-//       phone,
-//       state,
-//       deliveryType,
-//       address: deliveryType === "منزل" ? address : "",
-//       orderNumber,
-//       items,
-//       totalPrice,
-//       notes,
-//       isPaid,
-//       status: status || "غير مؤكدة",
-//       createdBy: req.user._id,
-//     });
-
-//     // ✅ تحديث الكمية في قاعدة البيانات إذا يجب الخصم
-//     if (shouldDecreaseStock) {
-//       for (const item of items) {
-//         await Product.updateOne(
-//           { _id: item.product, "colors.sizes.barcode": item.barcode },
-//           { $inc: { "colors.$[].sizes.$[s].quantity": -item.quantity } },
-//           { arrayFilters: [{ "s.barcode": item.barcode }] },
-//         );
-//       }
-//     }
-
-//     res
-//       .status(201)
-//       .json({ success: true, data: newOrder, message: "تم إنشاء طلبية بنجاح" });
-//   } catch (err) {
-//     console.error("Error creating order:", err);
-//     res
-//       .status(500)
-//       .json({ success: false, message: "حدث خطأ أثناء إنشاء الطلبية" });
-//   }
-// };
-
 exports.createOrder = async (req, res) => {
   try {
     const {
@@ -398,7 +261,7 @@ exports.updateOrder = async (req, res) => {
       discountAmount = 0,
       source,
       accountName,
-      handedToShipping
+      handedToShipping,
     } = req.body;
 
     const order = await Order.findById(id);
@@ -536,7 +399,7 @@ exports.updateOrder = async (req, res) => {
         source,
         status,
         accountName,
-        handedToShipping
+        handedToShipping,
       },
       { new: true, runValidators: true },
     );
@@ -610,7 +473,10 @@ exports.getOrders = async (req, res) => {
     let ordersQuery = Order.find(query)
       .sort({ createdAt: -1 })
       .populate("createdBy", "name")
-      .populate("items.product", req.user.role === "worker" ? "name" : "name originalPrice")
+      .populate(
+        "items.product",
+        req.user.role === "worker" ? "name" : "name originalPrice",
+      )
       .lean();
 
     let pagination = null;
@@ -685,7 +551,10 @@ exports.getOrderById = async (req, res) => {
 
     const order = await Order.findById(id)
       .populate("createdBy", "name")
-      .populate("items.product", req.user.role === "worker" ? "name" : "name originalPrice");
+      .populate(
+        "items.product",
+        req.user.role === "worker" ? "name" : "name originalPrice",
+      );
 
     if (!order) {
       return res
@@ -752,7 +621,7 @@ exports.exchangeOrder = async (req, res) => {
       }
 
       const originalItem = order.items.find(
-        (item) => item.barcode === originalBarcode
+        (item) => item.barcode === originalBarcode,
       );
       if (!originalItem) {
         return res.status(404).json({
@@ -812,9 +681,11 @@ exports.exchangeOrder = async (req, res) => {
       const newAmount = newQuantity * newProduct.price;
       const priceDifference = newAmount - originalAmount;
 
-      const originalCost = originalItem.quantity * (originalItem.originalPrice || 0);
+      const originalCost =
+        originalItem.quantity * (originalItem.originalPrice || 0);
       const newCost = newQuantity * (newProduct.originalPrice || 0);
-      const profitDifference = (newAmount - newCost) - (originalAmount - originalCost);
+      const profitDifference =
+        newAmount - newCost - (originalAmount - originalCost);
 
       // Return original to stock
       stockUpdates.push(
@@ -822,12 +693,12 @@ exports.exchangeOrder = async (req, res) => {
           originalItem.product,
           originalItem.barcode,
           originalItem.quantity,
-          false
-        )
+          false,
+        ),
       );
       // Deduct new from stock
       stockUpdates.push(
-        updateProductStock(newProduct._id, newBarcode, -newQuantity, false)
+        updateProductStock(newProduct._id, newBarcode, -newQuantity, false),
       );
 
       // Save exchange record
@@ -835,12 +706,13 @@ exports.exchangeOrder = async (req, res) => {
         originalItem: { ...originalItem.toObject() },
         exchangedWith: exchangedItem,
         exchangedAt: now,
-        priceDifference, profitDifference,
+        priceDifference,
+        profitDifference,
       });
 
       // Update order items list
       order.items = order.items.map((item) =>
-        item.barcode === originalBarcode ? exchangedItem : item
+        item.barcode === originalBarcode ? exchangedItem : item,
       );
     }
 

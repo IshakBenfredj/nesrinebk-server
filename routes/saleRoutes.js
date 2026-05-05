@@ -29,10 +29,22 @@ router.get(
   saleController.getSaleById
 );
 router.patch(
+  "/:id",
+  protect,
+  authorizeRoles("admin"),
+  saleController.updateSale
+);
+router.patch(
   "/complete-payment/:id",
   protect,
   authorizeRoles("worker", "admin"),
   saleController.completeSalePayment
 );
 
+router.delete(
+  "/:id",
+  protect,
+  authorizeRoles("admin"),
+  saleController.deleteSale
+);
 module.exports = router;

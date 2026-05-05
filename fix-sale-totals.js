@@ -4,7 +4,7 @@ const Sale = require("./models/Sale"); // Make sure this path is correct
 // ====================== CONFIGURATION ======================
 const MONGO_URI = "mongodb+srv://nesrinebka21:nesrinebka21@cluster0.2yyiwtw.mongodb.net/nesrinebka?retryWrites=true&w=majority&appName=Cluster0";
 
-const DAYS_TO_CHECK = 90;
+const DAYS_TO_CHECK = 14;
 // ===========================================================
 
 async function connectDB() {
@@ -26,6 +26,15 @@ function calculateCorrectTotal(items) {
   }, 0);
 }
 
+function calculateCorrectOriginalTotal(items) {
+  if (!items || !Array.isArray(items)) return 0;
+  return items.reduce((sum, item) => {
+    const originalPrice = item.originalPrice || 0;
+    const qty = item.quantity || 1;
+    return sum + originalPrice * qty;
+  }, 0);
+}
+
 // ==================== FIND AFFECTED SALES ====================
 async function findAffectedSales() {
   console.log("🔍 Searching for sales with incorrect 'total'...");
@@ -44,7 +53,7 @@ async function findAffectedSales() {
   }
 
   const sales = await Sale.find(query)
-    .select("barcode total discountAmount items originalTotal createdAt")
+    .select("barcode total discountAmount items originalTotal profit createdAt")
     .sort({ createdAt: -1 });
 
   let affected = [];
@@ -55,20 +64,29 @@ async function findAffectedSales() {
     const calculatedTotal = calculateCorrectTotal(sale.items);
     const savedTotal = sale.total || 0;
     const discount = sale.discountAmount || 0;
+    const savedProfit = sale.profit || 0;
+    const calculatedOriginalTotal = calculateCorrectOriginalTotal(sale.items);
+    const correctProfit = calculatedTotal - calculatedOriginalTotal;
 
-    const isAffected =
+    const isTotalAffected =
       Math.abs(savedTotal - (calculatedTotal - discount)) < 0.1 ||
       Math.abs(savedTotal + discount - calculatedTotal) < 0.1;
+    
+    const isProfitAffected = 
+      Math.abs(savedProfit - (correctProfit - discount)) < 0.1;
 
-    if (isAffected && calculatedTotal > savedTotal + 0.01) {
+    if ((isTotalAffected && calculatedTotal > savedTotal + 0.01) || (isProfitAffected && correctProfit > savedProfit + 0.01)) {
       affected.push({
         _id: sale._id,
         barcode: sale.barcode,
         createdAt: sale.createdAt,
         savedTotal: Number(savedTotal.toFixed(2)),
+        savedProfit: Number(savedProfit.toFixed(2)),
         discountAmount: Number(discount.toFixed(2)),
         calculatedTotal: Number(calculatedTotal.toFixed(2)),
-        difference: Number((calculatedTotal - savedTotal).toFixed(2)),
+        correctProfit: Number(correctProfit.toFixed(2)),
+        totalDiff: Number((calculatedTotal - savedTotal).toFixed(2)),
+        profitDiff: Number((correctProfit - savedProfit).toFixed(2)),
       });
     }
   }
@@ -81,10 +99,13 @@ async function findAffectedSales() {
       affected.map((s) => ({
         Barcode: s.barcode,
         Date: s.createdAt.toISOString().split("T")[0],
-        "Saved Total": s.savedTotal,
+        "Saved Tot": s.savedTotal,
+        "Corr Tot": s.calculatedTotal,
+        "Tot Diff": "+" + s.totalDiff,
+        "Saved Prof": s.savedProfit,
+        "Corr Prof": s.correctProfit,
+        "Prof Diff": "+" + s.profitDiff,
         Discount: s.discountAmount,
-        "Correct Total": s.calculatedTotal,
-        Difference: "+" + s.difference,
       }))
     );
   } else {
@@ -115,18 +136,19 @@ async function fixAffectedSales(affectedSales) {
       }
 
       const newTotal = calculateCorrectTotal(sale.items);
+      const newOriginalTotal = calculateCorrectOriginalTotal(sale.items);
+      const newProfit = newTotal - newOriginalTotal;
 
       const oldTotal = sale.total;
-      sale.total = Number(newTotal.toFixed(2));
+      const oldProfit = sale.profit;
 
-      // Fix originalTotal if needed
-      if (sale.originalTotal && sale.originalTotal < newTotal) {
-        sale.originalTotal = Number(newTotal.toFixed(2));
-      }
+      sale.total = Number(newTotal.toFixed(2));
+      sale.originalTotal = Number(newOriginalTotal.toFixed(2));
+      sale.profit = Number(newProfit.toFixed(2));
 
       await sale.save({ validateBeforeSave: false });
 
-      console.log(`✅ FIXED → ${sale.barcode} | ${oldTotal} → ${sale.total}`);
+      console.log(`✅ FIXED → ${sale.barcode} | Total: ${oldTotal}→${sale.total} | Profit: ${oldProfit}→${sale.profit}`);
       fixedCount++;
     } catch (error) {
       console.error(`❌ Failed to fix ${saleData.barcode}:`, error.message);
@@ -151,8 +173,8 @@ async function main() {
   }
 
   console.log("\n" + "=".repeat(70));
-  console.log("⚠️  READY TO FIX 85 SALES");
-  console.log("This will update the 'total' and possibly 'originalTotal' fields.");
+  console.log(`⚠️  READY TO FIX ${affectedSales.length} SALES`);
+  console.log("This will update 'total', 'originalTotal', and 'profit' fields.");
   console.log("=".repeat(70));
 
   const readline = require("readline").createInterface({

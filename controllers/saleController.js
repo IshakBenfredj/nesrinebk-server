@@ -974,6 +974,133 @@ exports.getAllSales = async (req, res) => {
   }
 };
 
+exports.updateSale = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { items, discountAmount } = req.body;
+
+    const sale = await Sale.findById(id);
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: "الفاتورة غير موجودة",
+      });
+    }
+
+    const oldItems = sale.items;
+    const newItems = items;
+
+    // Map of net changes for each barcode
+    const variantChanges = new Map();
+
+    // Track old quantities
+    for (const item of oldItems) {
+      variantChanges.set(item.barcode, {
+        productId: item.product,
+        oldQty: item.quantity,
+        newQty: 0,
+      });
+    }
+
+    // Track new quantities
+    for (const item of newItems) {
+      if (variantChanges.has(item.barcode)) {
+        variantChanges.get(item.barcode).newQty = item.quantity;
+      } else {
+        variantChanges.set(item.barcode, {
+          productId: item.product,
+          oldQty: 0,
+          newQty: item.quantity,
+        });
+      }
+    }
+
+    const stockUpdates = [];
+    for (const [barcode, info] of variantChanges.entries()) {
+      const diff = info.oldQty - info.newQty; // if positive, we add back to stock. if negative, we remove.
+      if (diff !== 0) {
+        stockUpdates.push(
+          updateProductStock(info.productId, barcode, diff, true),
+        );
+      }
+    }
+
+    await Promise.all(stockUpdates);
+
+    // Update sale items and totals
+    sale.items = newItems.map((item) => ({
+      product: item.product,
+      barcode: item.barcode,
+      quantity: item.quantity,
+      price: item.price,
+      originalPrice: item.originalPrice,
+      size: item.size,
+      color: item.color,
+    }));
+
+    sale.discountAmount = discountAmount || 0;
+    sale.total = sale.items.reduce(
+      (sum, item) => sum + item.quantity * item.price,
+      0,
+    );
+    sale.originalTotal = sale.items.reduce(
+      (sum, item) => sum + item.quantity * item.originalPrice,
+      0,
+    );
+    sale.profit =
+      sale.total - (sale.discountAmount || 0) - sale.originalTotal;
+
+    await sale.save();
+
+    res.json({
+      success: true,
+      message: "تم تحديث الفاتورة بنجاح",
+      data: sale,
+    });
+  } catch (error) {
+    console.error("Error updating sale:", error);
+    res.status(500).json({
+      success: false,
+      message: "حدث خطأ أثناء تحديث الفاتورة",
+    });
+  }
+};
+
+exports.deleteSale = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const sale = await Sale.findById(id);
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: "الفاتورة غير موجودة",
+      });
+    }
+
+    // Increment stock back for all items in the sale
+    const stockUpdates = sale.items.map((item) =>
+      updateProductStock(item.product, item.barcode, item.quantity, true),
+    );
+
+    await Promise.all(stockUpdates);
+
+    // Delete the sale
+    await Sale.findByIdAndDelete(id);
+
+    res.json({
+      success: true,
+      message: "تم حذف الفاتورة بنجاح وإرجاع المنتجات للمخزن",
+    });
+  } catch (error) {
+    console.error("Error deleting sale:", error);
+    res.status(500).json({
+      success: false,
+      message: "حدث خطأ أثناء حذف الفاتورة",
+    });
+  }
+};
+
 const updateDailyProfit = async (date, totalSales, totalOriginal, profit) => {
   try {
     const saleDate = new Date(date);
